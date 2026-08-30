@@ -4,21 +4,21 @@ A handheld where the AI draws the next screen as HTML. You talk. It listens. The
 
 That's it. That's the whole product.
 
-I built this because I got tired of the modern smartphone. Not the hardware — the hardware is fine. The model is broken. An operating system that hides everything behind icons you have to remember, arranged in a grid that some PM at Google decided was the right metaphor for the seventeenth year in a row. Notifications designed by people who hate you. Apps that demand permissions to do nothing useful with them. Forty-seven settings menus, none of which let you do the one thing you actually opened the app to do.
+I built this because I got tired of the modern smartphone. Not the hardware — the hardware is fine. The model is broken. An operating system that hides everything behind icons you have to remember, arranged in a grid that some unimaginative arrogant slob at Google/Apple decided was the right metaphor for the seventeenth year in a row. Notifications designed by narcissist who hate you. Apps that demand permissions to spy on you. Forty-seven settings menus, none of which let you do the one thing you actually opened the app to do.
 
-Look. The web won. It won twenty years ago. HTML, CSS, and JavaScript are the most deployed runtime in the history of computing. Every phone in your pocket ships with a faster browser than most laptops had in 2010. And we're still pretending the answer to "what should the home screen be?" is a folder of jpeg files you have to swipe past.
+The web won. It won twenty years ago. HTML, CSS, and JavaScript are the most deployed runtime in the history of computing. Every phone in your pocket ships with a faster browser than most laptops had in 2010. And we're still pretending the answer to "what should the home screen be?" is a folder of oversaturated jpegs you have to swipe past.
 
-Phosphor is my answer. The home screen is whatever the AI thinks you need next. Sometimes it's a button to call your mom. Sometimes it's a weather card with the next six hours. Sometimes it's a full settings page because you asked it to turn off the ringer. The browser renders it. There is no home screen. There is no app grid. There is no keyboard. There is a microphone, a model, and a black screen that fills with whatever makes sense.
+Phosphor is my answer. The home screen is whatever I need in the moment. Sometimes it's a button to call your mom. Sometimes it's a weather card with the next six hours. Sometimes it's a settings page because you asked it to turn off the ringer. The browser renders it. There is no home screen. There is no app grid. There is no keyboard... There is a microphone, a model, and a black screen that fills with whatever makes sense.
 
 ## How it actually works
 
 Three pieces. That's all.
 
-**A Pixel 8a running GrapheneOS.** Picked because Google's Tensor G3 NPU actually runs local LLMs at usable speed, and GrapheneOS gives me a base I can verify — no Google Play Services, no bloat I didn't install, no telemetry phoning home. Cost me $200 used from Swappa. I checked the model number first because Verizon Pixels have a permanently-locked bootloader and I refuse to live under anyone's thumb on a device I bought.
+**A Pixel 8a running GrapheneOS.** Picked because Google's Tensor G3 NPU actually runs local LLMs at usable speed, and GrapheneOS gives me a base I can verify — no Google Play Services, no bloat I didn't install, no telemetry phoning home. Cost me $200 used from Swappa. Make sure you check the model number first because Verizon Pixels have a permanently-locked bootloader and I refuse to live under anyone's thumb on a device I bought.
 
 **A Rust binary that talks to the OS.** Twenty-eight thousand lines of Rust in production is a lot. Phosphor's bridge is six hundred. It runs as root, binds `127.0.0.1:7777`, and exposes a JSON-RPC API. That's it. Every device capability — the modem, the GPS, the camera, NFC, Bluetooth, USB, the battery thermals, the clipboard — comes through as a method call. `tel.dial`. `geo.fix`. `battery.read`. No magic. No SDK. You could rewrite it in Python over a weekend if you really wanted to.
 
-**A browser locked into kiosk mode.** Vanadium, the GrapheneOS-maintained Chromium fork, held in a single tab by `cage`, a tiny Wayland compositor whose entire job is to fullscreen one window. The page it loads is `shell.html` — one static file that talks to the bridge over a WebSocket. When the model responds, it sends back HTML. The page swaps it in. No router. No state library. No bundler. It's the simplest thing that could possibly work.
+**A browser locked into kiosk mode.** Vanadium, the GrapheneOS-maintained Chromium fork, held in a single tab by `cage`, a tiny Wayland compositor whose entire job is to fullscreen one window. The page it loads is `shell.html` — one static file that talks to the bridge over a WebSocket. When the model responds, it sends back HTML. The page swaps it in. No router. No state library. No bundler. It's the simplest thing that could possibly work. This is the layer that I am focused on the most right now.
 
 ```
    you ──► whisper (STT) ──► LLM ──► HTML/CSS/JS ──► Vanadium
@@ -35,9 +35,9 @@ Phosphor is not a product. It's a personal project I'm open-sourcing because oth
 
 It is not a phone you can buy. You build it from a Pixel 8a and an afternoon.
 
-It does not have an app store. There are no apps. There is the AI.
+It does not have an app store. There are no apps. There is the AI and what you need in the moment
 
-It is not always offline. The bridge will fall back to a local llama.cpp build when the network is gone, but I'm not going to pretend the local models are good enough to replace the cloud ones yet. They're not. They will be. Today the cloud path is the good path.
+If it goes offline. The bridge will fall back to a local llama.cpp build when the network is gone, but I'm not going to pretend the local models are good enough to replace the cloud ones yet. They're not. They will be. Today the cloud path is the good path. Things are moving so fast that the limitations that make this clunky now will be gone VERY SOON. So im doing it now. Do I know what im doing? Absolutely not.
 
 ## Cost
 
@@ -51,7 +51,7 @@ What I actually spent:
 | Whisper API (12 months at my usage) | $30 |
 | **Total** | **$395** |
 
-No subscription. No in-app purchase. The phone is mine. The data stays on it. The model calls go to OpenRouter and that's the end of it.
+No subscription. No in-app purchase. The phone is mine. The data stays on it sort of... The model calls go to OpenRouter so check to make sure the model you use, uses your data in a way that you can live with, and that's the end of it.
 
 ## Getting it running
 
