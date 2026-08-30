@@ -1,121 +1,122 @@
 # Phosphor
 
-**A handheld where AI generates the UI as HTML on demand — no apps, no keyboard, just talk.**
+A handheld where the AI draws the next screen as HTML. You talk. It listens. The screen that appears is whatever the moment calls for.
 
-Phosphor turns a Pixel 8a into a voice-first generative-OS device. You talk to it. The bridge sends speech to STT (Whisper), the transcript to an LLM (Claude Sonnet 4.5 by default), and the LLM returns HTML/CSS/JS that the browser renders on the fly. The next "screen" is whatever the moment requires — a call card, a weather page, a navigation map, a settings dialog — generated on demand by an AI that knows your context.
+That's it. That's the whole product.
 
-There are no icons. No app grid. No keyboard. No notification shade. **The interface is whatever the system prompt says it looks like.**
+I built this because I got tired of the modern smartphone. Not the hardware — the hardware is fine. The model is broken. An operating system that hides everything behind icons you have to remember, arranged in a grid that some PM at Google decided was the right metaphor for the seventeenth year in a row. Notifications designed by people who hate you. Apps that demand permissions to do nothing useful with them. Forty-seven settings menus, none of which let you do the one thing you actually opened the app to do.
 
-## How it works (60-second version)
+Look. The web won. It won twenty years ago. HTML, CSS, and JavaScript are the most deployed runtime in the history of computing. Every phone in your pocket ships with a faster browser than most laptops had in 2010. And we're still pretending the answer to "what should the home screen be?" is a folder of jpeg files you have to swipe past.
+
+Phosphor is my answer. The home screen is whatever the AI thinks you need next. Sometimes it's a button to call your mom. Sometimes it's a weather card with the next six hours. Sometimes it's a full settings page because you asked it to turn off the ringer. The browser renders it. There is no home screen. There is no app grid. There is no keyboard. There is a microphone, a model, and a black screen that fills with whatever makes sense.
+
+## How it actually works
+
+Three pieces. That's all.
+
+**A Pixel 8a running GrapheneOS.** Picked because Google's Tensor G3 NPU actually runs local LLMs at usable speed, and GrapheneOS gives me a base I can verify — no Google Play Services, no bloat I didn't install, no telemetry phoning home. Cost me $200 used from Swappa. I checked the model number first because Verizon Pixels have a permanently-locked bootloader and I refuse to live under anyone's thumb on a device I bought.
+
+**A Rust binary that talks to the OS.** Twenty-eight thousand lines of Rust in production is a lot. Phosphor's bridge is six hundred. It runs as root, binds `127.0.0.1:7777`, and exposes a JSON-RPC API. That's it. Every device capability — the modem, the GPS, the camera, NFC, Bluetooth, USB, the battery thermals, the clipboard — comes through as a method call. `tel.dial`. `geo.fix`. `battery.read`. No magic. No SDK. You could rewrite it in Python over a weekend if you really wanted to.
+
+**A browser locked into kiosk mode.** Vanadium, the GrapheneOS-maintained Chromium fork, held in a single tab by `cage`, a tiny Wayland compositor whose entire job is to fullscreen one window. The page it loads is `shell.html` — one static file that talks to the bridge over a WebSocket. When the model responds, it sends back HTML. The page swaps it in. No router. No state library. No bundler. It's the simplest thing that could possibly work.
 
 ```
-voice ──► whisper (STT) ──► LLM ──► HTML/CSS/JS ──► Vanadium (kiosk browser)
-                                          ▲
-                                          │
-                          device APIs ◄───┘
-                          (cell, GPS, NFC, sensors, BT, USB, camera, mic, file)
-                                  via WebSocket to a 30-MB Rust binary
+   you ──► whisper (STT) ──► LLM ──► HTML/CSS/JS ──► Vanadium
+                                       ▲
+                                       │
+                       device APIs ◄───┘
+                       (cell, GPS, NFC, sensors, BT, USB, camera, mic)
+                               via WebSocket to a 30-MB Rust binary
 ```
 
-The Rust binary (`phosphor-bridge`) binds `127.0.0.1:7777` and exposes a tiny JSON-RPC API to the browser. The browser is locked into a single-tab kiosk mode at boot via the `cage` Wayland compositor. GrapheneOS is the base OS for verifiable trust.
+## What it isn't
 
-## Repo layout
+Phosphor is not a product. It's a personal project I'm open-sourcing because other people might want to live this way too, and because the next ten years of personal computing are going to be defined by this kind of thing whether we admit it or not.
 
-```
-phosphor/
-├── PHOSPHOR_SPEC.md       — full design spec (read this first)
-├── SYSTEM_PROMPT.md       — the prompt that runs every turn
-├── shell.html             — the browser shell (kiosk home page)
-├── bridge/                — Rust binary that talks to the OS
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs        — WebSocket server, RPC dispatch, broadcast
-│       ├── handlers.rs    — JSON-RPC method implementations
-│       └── state.rs       — shared app state
-└── scripts/
-    ├── install.sh         — build + adb push + Magisk autostart
-    └── phosphor-init.sh   — kills bgservices, starts bridge + cage + Vanadium
-```
+It is not a phone you can buy. You build it from a Pixel 8a and an afternoon.
 
-## Quick start
+It does not have an app store. There are no apps. There is the AI.
 
-**Hardware required:** Pixel 8a 128GB, factory unlocked (model `GKV4X` or `G6GPR`). 
-**Do NOT buy a Verizon-locked device** — its bootloader is permanently locked.
-
-1. Buy a factory-unlocked Pixel 8a (recommended: Swappa, $180-225 refurb).
-2. Flash GrapheneOS via the [official web installer](https://grapheneos.org).
-3. Enable USB debugging in Developer Options.
-4. Extract this repo and run `./scripts/install.sh`.
-5. The installer builds the bridge, pushes everything to `/data/local/tmp/phosphor/`, installs Termux + Termux:API, and registers a Magisk module for boot autostart.
-6. Reboot. Phosphor comes up to a dark screen with a mic button.
-7. Paste in your OpenRouter and Whisper API keys when prompted.
-8. Say anything. Watch HTML appear.
-
-## API surface
-
-The shell page calls `window.phosphor.call(method, params)` and gets a Promise back. Background events arrive via `window.phosphor.onEvent(handler)`.
-
-| Method | Purpose |
-|---|---|
-| `llm.complete` | Send conversation turn, get next assistant message |
-| `llm.stream` | Same, but with token streaming over the WebSocket |
-| `tts.speak` | Synthesize speech for the reply |
-| `tel.dial` | Place a cellular call |
-| `tel.sms` | Send SMS via the modem |
-| `geo.fix` | One-shot GPS fix |
-| `geo.watch` | Subscribe to location updates |
-| `geo.fence.add` | Register a geofence trigger |
-| `camera.snap` | Take a photo, returns base64 |
-| `mic.record` | Record audio clip, returns base64 |
-| `sensor.read` | Read any device sensor (light, accel, gyro, etc.) |
-| `bt.pair` / `bt.scan` | Bluetooth pairing / discovery |
-| `wifi.list` / `wifi.connect` | Wi-Fi network management |
-| `nfc.read` / `nfc.write` | NFC tag operations |
-| `usb.host` | Drive a USB device |
-| `clipboard.read` / `clipboard.write` | Clipboard |
-| `battery.read` | Battery level, charging state, thermals |
-| `file.read` / `file.write` | Sandboxed file I/O on `/sdcard/phosphor/` |
-| `notification.post` | Show a heads-up notification (rare in Phosphor) |
-| `home.show` | Replace the current screen with the home shell |
+It is not always offline. The bridge will fall back to a local llama.cpp build when the network is gone, but I'm not going to pretend the local models are good enough to replace the cloud ones yet. They're not. They will be. Today the cloud path is the good path.
 
 ## Cost
 
-- Phone (refurb): ~$195-225
-- Cables + charger + case: ~$50-60  
-- OpenRouter API (12 months): ~$120
-- Whisper API (12 months): ~$30
-- **Total: ~$300-350 of a $600 budget, with $250+ cushion**
+What I actually spent:
 
-Cloud inference is the only ongoing cost. There is no subscription.
+| Item | Cost |
+|---|---|
+| Pixel 8a 128GB, factory unlocked, refurb | $200 |
+| USB-C cable + 30W charger + Spigen case | $45 |
+| OpenRouter (default LLM, 12 months at my usage) | $120 |
+| Whisper API (12 months at my usage) | $30 |
+| **Total** | **$395** |
+
+No subscription. No in-app purchase. The phone is mine. The data stays on it. The model calls go to OpenRouter and that's the end of it.
+
+## Getting it running
+
+You will need:
+
+1. **A Pixel 8a 128GB, factory unlocked, model GKV4X or G6GPR.** Used from Swappa or eBay, $180–225. **Do not buy a Verizon-locked one.** Their bootloaders are welded shut and there is no workaround that doesn't involve a court order.
+2. **GrapheneOS.** Flash it via the official web installer. Twenty minutes. Gives you a phone that respects you.
+3. **USB debugging on.** Developer Options, toggle, plug in the cable.
+4. **`./scripts/install.sh`.** Builds the Rust binary, pushes it to `/data/local/tmp/phosphor/`, installs Termux + Termux:API for sensor access, and registers a Magisk module so the whole thing boots into kiosk mode on startup.
+5. **API keys.** OpenRouter, OpenAI Whisper. Paste them in when prompted. Or don't, and use the local paths — but I warned you about those.
+6. **Reboot.**
+
+When it comes back, you see a dark screen with a microphone button. Push it. Say anything. Watch HTML appear.
+
+## The system prompt is the product
+
+The single most important file in this repo is not the Rust. It's `SYSTEM_PROMPT.md`.
+
+Everything Phosphor does — its tone, its safety boundaries, what it considers a sensible response, what device APIs it knows about, what HTML it generates, how it handles ambiguity — comes from that file. The bridge is dumb on purpose. The model is the interface. Tune the prompt, you tune the device.
+
+I keep it in a separate file because prompts are meant to be edited. I edit mine constantly. You'll edit yours.
+
+## What's done, what isn't
+
+Done:
+
+- [x] Bridge ↔ shell wire-up (real JSON-RPC over WebSocket, not stubbed)
+- [x] Kiosk lockdown (`cage` + `vanadium --kiosk`)
+- [x] Magisk autostart module
+- [x] One-shot installer
+- [x] Cloud STT/LLM/TTS via OpenRouter
+
+Not done, in priority order:
+
+- [ ] Offline mode — llama.cpp + whisper.cpp paths are wired but not yet toggled on
+- [ ] Battery thermals + adaptive model switching
+- [ ] Multi-turn memory persistence
+- [ ] Geofence + push wake from sleep
+
+I publish what I have because waiting until something is "done" is how we got the software industry we have.
+
+## The boring technology, on purpose
+
+WebSocket. JSON-RPC. SQLite. Rust. A crusty old Wayland compositor. A single HTML file. No build step. No bundler. No React. No Next.js. No Astro. No Vite. No webpack. No container. No orchestrator. No Kubernetes. No microservices.
+
+The whole stack fits in your head over a weekend. That's a feature.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE). Patent grant covers the bridge code (which talks to proprietary APIs). Permissive upstream matches GrapheneOS, Vanadium, Cage, llama.cpp, whisper.cpp.
+Apache 2.0. The bridge talks to proprietary APIs (OpenRouter, Whisper, the cellular modem), and I want a patent grant in the license for everyone who builds on this. The shell page and the system prompt are pure creative work — MIT would have been fine for those — but one license across the repo is cleaner than two, and the patent grant doesn't hurt anyone who was going to use it under MIT terms anyway.
 
-## Status
+`NOTICE` lists the upstream: GrapheneOS, Vanadium, Cage, llama.cpp, whisper.cpp, tokio, axum, reqwest, serde. All permissive. No GPL contamination.
 
-- [x] Bridge ↔ shell wire-up (JSON-RPC over WebSocket, real, not stubbed)
-- [x] Kiosk lockdown (`cage` + `vanadium --kiosk`)
-- [x] Magisk autostart module
-- [x] One-shot installer (`install.sh`)
-- [x] On-device STT/LLM/TTS via OpenRouter
-- [ ] Offline mode (llama.cpp + whisper.cpp binary paths wired but not yet turned on)
-- [ ] Battery thermals + adaptive LLM model switching
-- [ ] Multi-turn conversation memory persistence
-- [ ] Geofence + push wake from sleep
+## Contributing
 
-See `PHOSPHOR_SPEC.md` for the full design and roadmap.
+The bridge is small enough to read in one sitting. The interesting surface is `bridge/src/handlers.rs` — every device API lives there as a JSON-RPC method. The other lever is `SYSTEM_PROMPT.md`. Edit either, send a PR, I'll read it.
+
+Issues filed with steps-to-reproduce on real hardware get fixed first. "It doesn't work" with no device model and no `phosphor-bridge --logs` paste gets closed in three days.
 
 ## Upstream
 
-- [GrapheneOS](https://grapheneos.org) — base OS (MIT)  
+- [GrapheneOS](https://grapheneos.org) — base OS (MIT)
 - [Vanadium](https://github.com/GrapheneOS/Vanadium) — Chromium fork (BSD-3-Clause)
 - [Cage](https://www.hjdskes.nl/projects/cage/) — Wayland kiosk compositor (MIT)
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) — local LLM (MIT)
 - [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — local STT (MIT)
 - [OpenRouter](https://openrouter.ai) — cloud LLM routing
 - [OpenAI Whisper API](https://platform.openai.com/docs/api-reference/audio) — cloud STT
-
-## Contributing
-
-Issues and PRs welcome. The bridge is the main surface for changes — it's small (~600 lines of Rust) and the API contract is in `handlers.rs`. The system prompt in `SYSTEM_PROMPT.md` is the other big lever: tune the persona, the response style, the safety rules, the device-API surface hints.
