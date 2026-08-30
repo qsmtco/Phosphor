@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#0a0e0a" />
+<title>Phosphor</title>
+
+<!--
+  Phosphor · shell.html
+  ────────────────────
+  The browser-as-OS. Drop this file on the phone (e.g. /opt/phosphor/shell.html)
+  and launch with: chromium --kiosk file:///opt/phosphor/shell.html
+
+  What it does:
+   1. Greets you with a tap-to-talk orb and live device state.
+   2. Records voice → streams to STT (OpenAI Whisper by default).
+   3. Sends transcript to an LLM via OpenRouter with a Phosphor system prompt.
+   4. The LLM returns a one-shot HTML screen, rendered into #screen.
+   5. Buttons inside the rendered HTML can call window.phosphor.* for real
+      device actions (calls, SMS, geofence, search, screenshot, etc.).
+
+  All configuration lives in CONFIG below. Zero build step. No bundler.
+  Open this file in any modern desktop browser to develop.
+-->
+
+<style>
+  /* ─── Phosphor base theme ────────────────────────────────────── */
+  :root {
+    --bg: #0a0e0a;
+    --bg-soft: #111a11;
+    --fg: #b6ffb6;
+    --fg-dim: #5a8a5a;
+    --accent: #7cffb2;
+    --accent-hot: #d6ff5e;
+    --warn: #ffb86b;
+    --err: #ff5e7c;
+    --line: #1d2a1d;
+    --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--mono); overflow: hidden; -webkit-tap-highlight-color: transparent; }
+
+  /* ─── Boot screen ────────────────────────────────────────────── */
+  #boot { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 100; transition: opacity 0.4s; }
+  #boot .ring { width: 64px; height: 64px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+  #boot .label { margin-top: 16px; color: var(--fg-dim); font-size: 12px; letter-spacing: 0.2em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ─── Status bar (always visible) ───────────────────────────── */
+  #status { position: fixed; top: 0; left: 0; right: 0; height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; font-size: 11px; color: var(--fg-dim); z-index: 10; pointer-events: none; background: linear-gradient(to bottom, rgba(10,14,10,0.85), transparent); }
+  #status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 6px; vertical-align: middle; }
+  #status .dot.offline { background: var(--warn); }
+  #status .dot.err { background: var(--err); }
+  #status .right { display: flex; gap: 12px; align-items: center; }
+
+  /* ─── Canvas (where the LLM draws) ──────────────────────────── */
+  #screen { position: fixed; inset: 28px 0 0 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #screen > * { animation: fadein 0.25s ease-out; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ─── Default idle screen ───────────────────────────────────── */
+  #idle { display: grid; place-items: center; height: 100%; text-align: center; padding: 20px; }
+  #idle h1 { font-size: 14px; color: var(--fg-dim); letter-spacing: 0.3em; margin: 0 0 24px; font-weight: 400; }
+  #orb { width: 180px; height: 180px; border-radius: 50%; background: radial-gradient(circle at 50% 50%, var(--accent) 0%, rgba(124,255,178,0.05) 60%, transparent 75%); display: grid; place-items: center; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+  #orb:hover, #orb:focus { transform: scale(1.04); outline: none; }
+  #orb.listening { animation: pulse 1.4s ease-in-out infinite; box-shadow: 0 0 60px rgba(124,255,178,0.4); }
+  #orb.thinking { animation: spin 2s linear infinite; background: conic-gradient(from 0deg, var(--accent), transparent 60%); }
+  #orb .inner { width: 100px; height: 100px; border-radius: 50%; background: var(--bg); display: grid; place-items: center; font-size: 36px; color: var(--accent); }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
+  #hint { margin-top: 32px; font-size: 12px; color: var(--fg-dim); max-width: 320px; line-height: 1.6; }
+
+  /* ─── Transcript bubble (floating) ──────────────────────────── */
+  #transcript { position: fixed; left: 14px; right: 14px; bottom: 14px; padding: 12px 16px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; color: var(--fg); font-size: 14px; line-height: 1.4; max-height: 30vh; overflow-y: auto; display: none; z-index: 9; }
+  #transcript.show { display: block; }
+  #transcript .role { font-size: 10px; color: var(--fg-dim); letter-spacing: 0.2em; margin-bottom: 4px; }
+
+  /* ─── Stop / cancel button (always reachable) ────────────────── */
+  #stop { position: fixed; right: 14px; bottom: 14px; width: 56px; height: 56px; border-radius: 50%; background: var(--err); color: #1a0a0a; border: none; font-family: var(--mono); font-size: 18px; cursor: pointer; display: none; z-index: 11; box-shadow: 0 4px 20px rgba(255,94,124,0.4); }
+  #stop.show { display: grid; place-items: center; }
+
+  /* ─── Generic content styling (LLM-rendered HTML) ────────────── */
+  .ph-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin: 14px; }
+  .ph-row { display: flex; gap: 12px; align-items: center; padding: 14px; margin: 8px 14px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; min-height: 56px; }
+  .ph-row:active { background: #182218; }
+  .ph-row .glyph { width: 40px; height: 40px; border-radius: 50%; background: var(--line); display: grid; place-items: center; color: var(--accent); flex: 0 0 auto; }
+  .ph-row .text { flex: 1; font-size: 15px; color: var(--fg); }
+  .ph-row .sub { display: block; font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+  .ph-btn { display: inline-block; padding: 14px 22px; background: var(--accent); color: #0a0e0a; border: none; border-radius: 12px; font-family: var(--mono); font-size: 15px; font-weight: 600; cursor: pointer; min-height: 48px; }
+  .ph-btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .ph-btn.danger { background: var(--err); }
+  .ph-h { font-size: 22px; margin: 14px 14px 6px; color: var(--fg); font-weight: 500; }
+  .ph-sub { font-size: 12px; color: var(--fg-dim); margin: 0 14px 12px; letter-spacing: 0.1em; }
+  .ph-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 0 14px; }
+  .ph-grid .ph-card { margin: 0; padding: 14px; }
+  .ph-input { width: 100%; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; color: var(--fg); font-family: var(--mono); font-size: 14px; min-height: 48px; }
+</style>
+</head>
+<body>
+
+<!-- ─── BOOT ───────────────────────────────────────────────────── -->
+<div id="boot">
+  <div class="ring"></div>
+  <div class="label">PHOSPHOR · BOOT</div>
+</div>
+
+<!-- ─── STATUS (always visible) ───────────────────────────────── -->
+<div id="status">
+  <div><span class="dot" id="dot"></span><span id="model-label">…</span></div>
+  <div class="right">
+    <span id="time">--:--</span>
+    <span id="battery">--</span>
+  </div>
+</div>
+
+<!-- ─── CANVAS ────────────────────────────────────────────────── -->
+<div id="screen">
+  <!-- Default idle UI (overwritten by first LLM render) -->
+  <div id="idle">
+    <h1>PHOSPHOR</h1>
+    <div id="orb" tabindex="0" role="button" aria-label="Tap to talk">
+      <div class="inner">●</div>
+    </div>
+    <div id="hint">Tap the orb. Speak. Phosphor renders whatever you need.</div>
+  </div>
+</div>
+
+<!-- ─── TRANSCRIPT (floating) ─────────────────────────────────── -->
+<div id="transcript">
+  <div class="role" id="transcript-role">YOU</div>
+  <div id="transcript-text"></div>
+</div>
+
+<!-- ─── STOP (cancel current action) ─────────────────────────── -->
+<button id="stop" aria-label="Cancel">×</button>
+
+<script>
+'use strict';
+
+/* ════════════════════════════════════════════════════════════════
+   CONFIG — edit these values, save, reload. No build step.
+   ════════════════════════════════════════════════════════════════ */
+// DEFAULT_SYSTEM_PROMPT is declared BELOW (after CONFIG) to avoid the
+// temporal dead zone. CONFIG.defaultSystemPrompt is the placeholder the
+// renderSetup() flow uses; the real prompt is hoisted into CONFIG below.
+const CONFIG = {
+  // OpenRouter is the LLM gateway. Get a key at https://openrouter.ai/keys
+  openrouterKey: localStorage.getItem('ph:openrouterKey') || '',
+  // Default model. Swap freely — OpenRouter exposes 200+ models.
+  model: localStorage.getItem('ph:model') || 'anthropic/claude-sonnet-4.5',
+  // Where the STT API lives. Phosphor records webm/opus and POSTs it here.
+  // Default: OpenAI Whisper. Swap to your own endpoint if you self-host.
+  sttUrl: localStorage.getItem('ph:sttUrl') || 'https://api.openai.com/v1/audio/transcriptions',
+  sttKey: localStorage.getItem('ph:sttKey') || '',           // usually same as openai key
+  // Where the TTS API lives. Empty = no spoken reply.
+  ttsUrl: localStorage.getItem('ph:ttsUrl') || '',
+  ttsKey: localStorage.getItem('ph:ttsKey') || '',
+  ttsVoice: localStorage.getItem('ph:ttsVoice') || 'alloy',
+  // The system prompt that turns an LLM into Phosphor's OS brain.
+  // Falls back to DEFAULT_SYSTEM_PROMPT (defined right below) at runtime
+  // so we don't touch localStorage on every load.
+  systemPrompt: localStorage.getItem('ph:systemPrompt') || '',
+};
+
+/* ════════════════════════════════════════════════════════════════
+   DEFAULT SYSTEM PROMPT — the personality of the OS.
+   Override via CONFIG.systemPrompt or the settings UI.
+   ════════════════════════════════════════════════════════════════ */
+const DEFAULT_SYSTEM_PROMPT = `You are Phosphor, the OS of a handheld AI device.
+The screen is 1080×2400 CSS pixels, touch-only, no keyboard.
+
+When the user speaks to you, respond with a SINGLE complete HTML5 fragment
+containing inline CSS and inline JS. No <html>, <head>, or <body>. No markdown.
+No code fences. No commentary. Just the HTML fragment, ready to drop into the
+DOM.
+
+Layout rules:
+ • Use the provided CSS classes: .ph-card, .ph-row, .ph-btn, .ph-h, .ph-sub,
+   .ph-grid, .ph-input. They already style for dark theme + Phosphor palette.
+ • Large tap targets (min 48px tall). Buttons full-width or stacked.
+ • 14px outer margin on cards/rows. Vertical rhythm matters.
+ • Never use external CSS, fonts, or scripts — everything inline.
+ • Never use emojis unless the user asks for one.
+ • Keep total response under 800 words.
+
+Device API (use via inline JS):
+ • window.phosphor.call('tel.dial',  { number: '+15551234567' })
+ • window.phosphor.call('sms.send',  { to: '+15551234567', body: 'hi' })
+ • window.phosphor.call('geo.get',   {}).then(r => r.lat/lng)
+ • window.phosphor.call('app.open',  { url: 'https://maps.example' })
+ • window.phosphor.call('clip.read', {}).then(r => r.text)
+ • window.phosphor.call('notif.set', { title: '...', body: '...' })
+ • window.phosphor.call('screen.idle', { seconds: 30 })
+
+When a button needs to send the user back to a prompt, render:
+ <button class="ph-btn" onclick="phosphor.ask('your follow-up question')">label</button>
+
+If the user asks for a web page, embed an <iframe> in the card with
+sandbox="allow-scripts allow-same-origin" src="https://..."`.
+
+// Backfill CONFIG.systemPrompt now that DEFAULT_SYSTEM_PROMPT is in scope.
+if (!CONFIG.systemPrompt) CONFIG.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+
+/* ════════════════════════════════════════════════════════════════
+   PHOSPHOR BRIDGE — real WebSocket client.
+
+   Connects to phosphor-bridge over ws://127.0.0.1:7777/ws and exchanges
+   JSON-RPC 2.0. On desktop (no bridge running) phosphor.call() falls back
+   to a stub so you can iterate on the LLM-rendered HTML without the Rust
+   binary.
+   ════════════════════════════════════════════════════════════════ */
+const BRIDGE_URL = 'ws://127.0.0.1:7777/ws';
+let ws = null;
+let wsReady = false;
+let callCounter = 0;
+const pendingCalls = new Map();   // id -> { resolve, reject, method, ts }
+const eventHandlers = new Set();  // listeners for push events (geo.fired, etc.)
+
+function connectBridge() {
+  if (ws && (ws.readyState === WebSocket.OPEN ||
+             ws.readyState === WebSocket.CONNECTING)) return;
+  try {
+    ws = new WebSocket(BRIDGE_URL);
+  } catch (e) {
+    console.warn('[phosphor] bridge unreachable:', e);
+    setTimeout(connectBridge, 2000);
+    return;
+  }
+  ws.addEventListener('open', () => {
+    wsReady = true;
+    const dot = $('#dot');
+    if (dot) dot.classList.remove('offline', 'err');
+    console.log('[phosphor] bridge connected');
+  });
+  ws.addEventListener('close', () => {
+    wsReady = false;
+    const dot = $('#dot');
+    if (dot) dot.classList.add('err');
+    // Retry every 2s. Bridge takes ~150ms to come up on boot.
+    setTimeout(connectBridge, 2000);
+  });
+  ws.addEventListener('error', () => {
+    const dot = $('#dot');
+    if (dot) dot.classList.add('err');
+  });
+  ws.addEventListener('message', (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    // RPC response — has id and exactly one of result/error.
+    if (msg.id != null && pendingCalls.has(msg.id)) {
+      const { resolve, reject } = pendingCalls.get(msg.id);
+      pendingCalls.delete(msg.id);
+      if (msg.error) reject(new Error(msg.error.message || 'bridge error'));
+      else resolve(msg.result);
+      return;
+    }
+    // Push event from a background task — fire all listeners.
+    if (msg.event) {
+      for (const h of eventHandlers) {
+        try { h(msg); } catch (e) { console.error('[phosphor] event handler', e); }
+      }
+    }
+  });
+}
+
+function bridgeCall(method, params = {}) {
+  // Fall back to a stub if the bridge isn't up — lets you develop the
+  // LLM-prompted UI on desktop without running the Rust binary.
+  if (!wsReady) {
+    console.log('[phosphor.call]', method, params);
+    return Promise.resolve({ ok: true, method, params, stub: true });
+  }
+  const id = `c${++callCounter}-${Date.now()}`;
+  return new Promise((resolve, reject) => {
+    pendingCalls.set(id, { resolve, reject, method, ts: Date.now() });
+    // 30s timeout — protects against hung bridge handlers.
+    setTimeout(() => {
+      if (pendingCalls.has(id)) {
+        pendingCalls.delete(id);
+        reject(new Error(`bridge timeout: ${method}`));
+      }
+    }, 30_000);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+}
+
+window.phosphor = {
+  call: bridgeCall,
+  // Subscribe to push events from background tasks (geofences, SMS, etc.).
+  onEvent(handler) {
+    eventHandlers.add(handler);
+    return () => eventHandlers.delete(handler);
+  },
+  // The LLM renders a button with onclick="phosphor.ask('...')".
+  ask(prompt) {
+    transcript('YOU', prompt);
+    runTurn(prompt);
+  },
+  // Open a URL in a new top-layer card (for "show me a webpage" requests).
+  browse(url) {
+    const ifr = `<iframe src="${escapeHtml(url)}"
+      style="width:100%;height:80vh;border:0;background:#000"
+      sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`;
+    setScreen(`<div class="ph-card">${ifr}</div>`);
+  },
+  // Reset to idle.
+  home() { location.reload(); },
+};
+
+connectBridge();
+
+/* ════════════════════════════════════════════════════════════════
+   STATE
+   ════════════════════════════════════════════════════════════════ */
+const state = {
+  history: [],         // {role, content} turns for the LLM
+  listening: false,
+  thinking: false,
+  mediaRecorder: null,
+  chunks: [],
+  abortCtrl: null,
+};
+
+/* ════════════════════════════════════════════════════════════════
+   UI HELPERS
+   ════════════════════════════════════════════════════════════════ */
+const $ = (sel) => document.querySelector(sel);
+
+function setScreen(html) {
+  const screen = $('#screen');
+  screen.innerHTML = html;
+  // Scroll new content into view from the top
+  screen.scrollTop = 0;
+}
+
+function transcript(role, text) {
+  const el = $('#transcript');
+  $('#transcript-role').textContent = role;
+  $('#transcript-text').textContent = text;
+  el.classList.add('show');
+  el.scrollTop = el.scrollHeight;
+}
+
+function setOrbState(s) {
+  const orb = $('#orb');
+  orb.classList.remove('listening', 'thinking');
+  if (s) orb.classList.add(s);
+}
+
+function setStopVisible(v) {
+  $('#stop').classList.toggle('show', v);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+/* ════════════════════════════════════════════════════════════════
+   STATUS BAR — clock + battery + model label
+   ════════════════════════════════════════════════════════════════ */
+function tickClock() {
+  const d = new Date();
+  $('#time').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+setInterval(tickClock, 30_000); tickClock();
+
+async function refreshBattery() {
+  try {
+    const b = await navigator.getBattery?.();
+    if (b) {
+      const upd = () => $('#battery').textContent = `${Math.round(b.level * 100)}%`;
+      b.addEventListener('levelchange', upd); upd();
+    }
+  } catch {}
+}
+refreshBattery();
+
+$('#model-label').textContent = CONFIG.model.split('/').pop();
+
+/* ════════════════════════════════════════════════════════════════
+   SETTINGS — first-run overlay if no API key
+   ════════════════════════════════════════════════════════════════ */
+function needsSetup() {
+  return !CONFIG.openrouterKey;
+}
+
+function renderSetup() {
+  setScreen(`
+    <div class="ph-card" style="margin-top:60px">
+      <div class="ph-h">First boot</div>
+      <div class="ph-sub">PASTE YOUR OPENROUTER KEY</div>
+      <input id="k1" class="ph-input" type="password" placeholder="sk-or-v1-..."
+        value="${escapeHtml(CONFIG.openrouterKey)}" />
+      <div style="height:10px"></div>
+      <input id="k2" class="ph-input" type="password" placeholder="STT key (OpenAI Whisper, usually same)"
+        value="${escapeHtml(CONFIG.sttKey)}" />
+      <div style="height:16px"></div>
+      <input id="m" class="ph-input" placeholder="model"
+        value="${escapeHtml(CONFIG.model)}" />
+      <div style="height:24px"></div>
+      <button class="ph-btn" id="save">Save &amp; continue</button>
+    </div>
+  `);
+  $('#save').onclick = () => {
+    localStorage.setItem('ph:openrouterKey', $('#k1').value.trim());
+    localStorage.setItem('ph:sttKey',        $('#k2').value.trim());
+    localStorage.setItem('ph:model',         $('#m').value.trim() || CONFIG.model);
+    location.reload();
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════
+   VOICE CAPTURE — MediaRecorder → webm/opus → STT API
+   ════════════════════════════════════════════════════════════════ */
+async function startListening() {
+  if (state.listening || state.thinking) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+    });
+    state.chunks = [];
+    state.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    state.mediaRecorder.ondataavailable = (e) => { if (e.data.size) state.chunks.push(e.data); };
+    state.mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(state.chunks, { type: 'audio/webm' });
+      transcribe(blob);
+    };
+    state.mediaRecorder.start();
+    state.listening = true;
+    setOrbState('listening');
+    setStopVisible(true);
+  } catch (err) {
+    setScreen(`<div class="ph-card">Mic denied: ${escapeHtml(err.message)}<br><br>
+      <button class="ph-btn" onclick="phosphor.home()">retry</button></div>`);
+  }
+}
+
+function stopListening() {
+  if (!state.listening) return;
+  state.listening = false;
+  setOrbState(null);
+  state.mediaRecorder?.stop();
+}
+
+async function transcribe(blob) {
+  setOrbState('thinking');
+  state.thinking = true;
+  try {
+    const fd = new FormData();
+    fd.append('file', blob, 'speech.webm');
+    fd.append('model', 'whisper-1');
+    const r = await fetch(CONFIG.sttUrl, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${CONFIG.sttKey}` },
+      body: fd,
+    });
+    if (!r.ok) throw new Error(`STT ${r.status}: ${await r.text()}`);
+    const { text } = await r.json();
+    if (!text?.trim()) { finishTurn(); return; }
+    transcript('YOU', text);
+    await runTurn(text);
+  } catch (err) {
+    setScreen(`<div class="ph-card">STT failed: ${escapeHtml(err.message)}<br><br>
+      <button class="ph-btn" onclick="phosphor.home()">retry</button></div>`);
+  } finally {
+    finishTurn();
+  }
+}
+
+function finishTurn() {
+  state.thinking = false;
+  setOrbState(null);
+  setStopVisible(false);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   LLM — OpenRouter streaming chat completion
+   ════════════════════════════════════════════════════════════════ */
+async function runTurn(userText) {
+  state.abortCtrl = new AbortController();
+  state.history.push({ role: 'user', content: userText });
+
+  // Trim history to last 8 turns to keep latency low
+  const trimmed = state.history.slice(-8);
+
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      signal: state.abortCtrl.signal,
+      headers: {
+        'Authorization': `Bearer ${CONFIG.openrouterKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': location.origin,
+        'X-Title': 'Phosphor',
+      },
+      body: JSON.stringify({
+        model: CONFIG.model,
+        stream: true,
+        messages: [
+          { role: 'system', content: CONFIG.systemPrompt },
+          ...trimmed,
+        ],
+      }),
+    });
+    if (!r.ok) throw new Error(`LLM ${r.status}: ${await r.text()}`);
+
+    // Stream tokens into the screen in real time
+    setScreen('<div class="ph-card" id="stream"></div>');
+    const streamEl = $('#stream');
+    let acc = '';
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta?.content || '';
+          acc += delta;
+          // Live render as it streams — strip any accidental markdown fences
+          streamEl.innerHTML = acc.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '');
+          $('#screen').scrollTop = $('#screen').scrollHeight;
+        } catch {}
+      }
+    }
+
+    state.history.push({ role: 'assistant', content: acc });
+    finishTurn();
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      setScreen(`<div class="ph-card">LLM failed: ${escapeHtml(err.message)}<br><br>
+        <button class="ph-btn" onclick="phosphor.home()">retry</button></div>`);
+    }
+    finishTurn();
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   EVENTS
+   ════════════════════════════════════════════════════════════════ */
+$('#orb').addEventListener('click', () => {
+  if (state.listening) stopListening();
+  else startListening();
+});
+
+$('#stop').addEventListener('click', () => {
+  if (state.listening) stopListening();
+  else if (state.thinking) { state.abortCtrl?.abort(); finishTurn(); }
+});
+
+// Tap-and-hold to type instead of speak (still no keyboard — uses
+// a hidden contenteditable + Android IME via Web Speech inputmode)
+let pressTimer;
+$('#orb').addEventListener('pointerdown', () => {
+  pressTimer = setTimeout(() => {
+    const q = prompt('Type instead of speak:');
+    if (q) { transcript('YOU', q); runTurn(q); }
+  }, 600);
+});
+$('#orb').addEventListener('pointerup', () => clearTimeout(pressTimer));
+$('#orb').addEventListener('pointerleave', () => clearTimeout(pressTimer));
+
+/* ════════════════════════════════════════════════════════════════
+   BOOT
+   ════════════════════════════════════════════════════════════════ */
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    $('#boot').style.opacity = '0';
+    setTimeout(() => $('#boot').remove(), 400);
+    if (needsSetup()) renderSetup();
+  }, 300);
+});
+
+// Expose runTurn for the bridge to call when an event triggers a turn
+// (e.g. geofence fired, SMS arrived, timer elapsed).
+window.phosphor.triggerTurn = (text) => runTurn(text);
+</script>
+</body>
+</html>

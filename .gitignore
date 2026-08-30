@@ -1,0 +1,41 @@
+# Rust build output
+bridge/target/
+bridge/Cargo.lock
+
+# Rust
+*.rs.bk
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Secrets — never commit anything with a key
+*.env
+.env
+.env.*
+secrets/
+*.pem
+*.key
+*token*
+*pat*
+*credential*
+
+# Tarballs / build artifacts
+*.tar.gz
+*.tgz
+*.zip
+/dist/
+/build/
+/out/
+
+# Local notes
+*.log
+*.tmp
+*.bak
+
+# Magisk module output (if you build it locally)
+phosphor-module/

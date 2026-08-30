@@ -1,0 +1,19 @@
+Phosphor
+Copyright 2026 The Phosphor Authors
+
+This product includes software developed by third parties:
+
+- GrapheneOS (https://grapheneos.org) — base operating system, MIT License
+- Vanadium (https://github.com/GrapheneOS/Vanadium) — Chromium fork, BSD-3-Clause
+- Cage (https://www.hjdskes.nl/projects/cage/) — Wayland kiosk compositor, MIT License
+- llama.cpp (https://github.com/ggerganov/llama.cpp) — local LLM inference, MIT License
+- whisper.cpp (https://github.com/ggerganov/whisper.cpp) — local speech recognition, MIT License
+- tokio (https://github.com/tokio-rs/tokio) — async runtime, MIT License
+- axum (https://github.com/tokio-rs/axum) — HTTP/WebSocket framework, MIT License
+- serde (https://github.com/serde-rs/serde) — serialization framework, MIT/Apache-2.0
+- reqwest (https://github.com/seanmonstar/reqwest) — HTTP client, MIT/Apache-2.0
+
+Phosphor's WebSocket/JSON-RPC protocol is adapted from patterns common to the
+axum ecosystem; the API surface is original to this project.
+
+For full license texts, see the upstream project pages listed above.
