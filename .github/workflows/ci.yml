@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bridge:
+    name: Bridge — cargo check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+      - run: cargo check --locked
+
+  shell:
+    name: Shell — JS syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Extract inline script and compile it
+        run: |
+          node -e '
+            const fs = require("fs"), vm = require("vm");
+            const html = fs.readFileSync("shell.html", "utf8");
+            const m = html.match(/<script>([\s\S]*)<\/script>/);
+            if (!m) { console.error("no <script> block found"); process.exit(1); }
+            try {
+              new vm.Script(m[1], { filename: "shell-inline.js" });
+              console.log("shell.html inline JS: OK");
+            } catch (e) {
+              console.error("shell.html inline JS: " + e.message);
+              process.exit(1);
+            }
+          '
