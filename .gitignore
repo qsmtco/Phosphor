@@ -1,6 +1,5 @@
 # Rust build output
 bridge/target/
-bridge/Cargo.lock
 
 # Rust
 *.rs.bk

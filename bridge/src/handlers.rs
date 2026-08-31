@@ -270,7 +270,18 @@ async fn kv_set(params: Value) -> Result<Value, String> {
 
 async fn read_kv() -> Result<serde_json::Map<String, Value>, String> {
     match tokio::fs::read(KV_PATH).await {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| e.to_string()),
+        Ok(b) => match serde_json::from_slice(&b) {
+            Ok(m) => Ok(m),
+            // Primary file exists but doesn't parse (corrupt-but-complete
+            // is possible even with atomic rename). Fall back to the last
+            // known-good backup before giving up.
+            Err(e) => match tokio::fs::read(format!("{KV_PATH}.bak")).await {
+                Ok(bb) => serde_json::from_slice(&bb).map_err(|be| {
+                    format!("kv.json corrupt ({e}) and backup also corrupt ({be})")
+                }),
+                Err(_) => Err(format!("kv.json corrupt ({e}), no backup")),
+            },
+        },
         Err(_) => Ok(serde_json::Map::new()),
     }
 }
@@ -287,6 +298,10 @@ async fn write_kv(map: &serde_json::Map<String, Value>) -> Result<(), String> {
     tokio::fs::write(&tmp, serde_json::to_vec_pretty(map).unwrap())
         .await
         .map_err(|e| e.to_string())?;
+    // Rotate: keep the previous generation as .bak so read_kv() can fall
+    // back to it if the new file ever parses as valid JSON but is corrupt
+    // in a way rename alone can't protect against.
+    let _ = tokio::fs::rename(KV_PATH, format!("{KV_PATH}.bak")).await;
     tokio::fs::rename(&tmp, KV_PATH).await.map_err(|e| e.to_string())
 }
 
