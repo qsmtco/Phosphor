@@ -253,11 +253,17 @@ async fn kv_get(params: Value) -> Result<Value, String> {
     Ok(map.get(key).cloned().unwrap_or(Value::Null))
 }
 
+use once_cell::sync::Lazy;
+static KV_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
+
 async fn kv_set(params: Value) -> Result<Value, String> {
-    let key = params.get("key").and_then(|v| v.as_str()).ok_or("missing key")?;
+    let key = params.get("key").and_then(|v| v.as_str()).ok_or("missing key")?.to_string();
     let value = params.get("value").cloned().ok_or("missing value")?;
+    // Hold the KV mutex across the whole read-modify-write so concurrent
+    // turns can't lose each other's updates.
+    let _guard = KV_LOCK.lock().await;
     let mut map = read_kv().await.unwrap_or_default();
-    map.insert(key.to_string(), value);
+    map.insert(key, value);
     write_kv(&map).await?;
     Ok(json!({ "ok": true }))
 }
@@ -273,9 +279,15 @@ async fn write_kv(map: &serde_json::Map<String, Value>) -> Result<(), String> {
     if let Some(parent) = std::path::Path::new(KV_PATH).parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    tokio::fs::write(KV_PATH, serde_json::to_vec_pretty(map).unwrap())
+    // Atomic write: tmp file + rename, so a crash mid-write can never
+    // leave a half-written kv.json behind. (Same filesystem → rename is
+    // atomic. No fsync: losing the last write on power loss is acceptable
+    // for LLM memory notes, and fsync costs battery on a phone.)
+    let tmp = format!("{KV_PATH}.tmp");
+    tokio::fs::write(&tmp, serde_json::to_vec_pretty(map).unwrap())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    tokio::fs::rename(&tmp, KV_PATH).await.map_err(|e| e.to_string())
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -296,13 +308,21 @@ pub fn spawn_background_tasks(state: Arc<AppState>) {
         });
     }
 
-    // 2. Geofence poller — every 60s check location, fire any fences.
+    // 2. Geofence poller — checks location on an adaptive interval:
+    //    30s when inside/near a fence (±2× radius), 5 min when far from
+    //    all fences. Fires `geo.fired` events on boundary crossings.
     {
         let s = state.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(60));
+            let mut fast = tokio::time::interval(Duration::from_secs(30));
+            let mut slow = tokio::time::interval(Duration::from_secs(300));
+            fast.tick().await; // consume the immediate first ticks
+            slow.tick().await;
             loop {
-                tick.tick().await;
+                tokio::select! {
+                    _ = fast.tick() => {},
+                    _ = slow.tick() => {},
+                }
                 let Ok(loc) = call_ipc(s.clone(), "geo.get", json!({ "provider": "fused" })).await
                 else { continue };
 
@@ -311,9 +331,14 @@ pub fn spawn_background_tasks(state: Arc<AppState>) {
                     loc.get("lng").and_then(|v| v.as_f64()),
                 ) else { continue };
 
+                // Adaptive cadence: poll fast only if any fence is close.
+                let mut near_any = false;
                 let mut fences = s.geofences.write().await;
                 for f in fences.iter_mut() {
                     let d = haversine_m(lat, lng, f.lat, f.lng);
+                    if d <= f.radius_m * 2.0 {
+                        near_any = true;
+                    }
                     if d <= f.radius_m && !f.active {
                         f.active = true;
                         s.broadcast_event(json!({
@@ -324,6 +349,13 @@ pub fn spawn_background_tasks(state: Arc<AppState>) {
                         }));
                     } else if d > f.radius_m && f.active {
                         f.active = false;
+                    }
+                }
+                drop(fences);
+                // When far from every fence, skip the next few fast ticks.
+                if !near_any {
+                    for _ in 0..9 {
+                        fast.tick().await;
                     }
                 }
             }

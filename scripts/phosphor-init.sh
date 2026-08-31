@@ -16,6 +16,7 @@ set -e
 PHOSPHOR_HOME="/data/local/tmp/phosphor"
 PHOSPHOR_LOG="/data/local/tmp/phosphor.log"
 SHELL_HTML="file:///data/local/tmp/phosphor/shell.html"
+mkdir -p "$PHOSPHOR_HOME"
 
 log() {
   echo "[$(date '+%H:%M:%S')] $*" >> "$PHOSPHOR_LOG"
@@ -23,6 +24,27 @@ log() {
 }
 
 log "phosphor-init: starting"
+
+# ─── 0. `resume` mode — undo the kiosk freeze ────────────────────
+# Run `phosphor-init.sh resume` to SIGCONT every process the kiosk
+# mode SIGSTOP'd (recorded in stopped.pids). Use this when you want
+# the phone to behave like a normal phone again without a reboot.
+# The bridge can invoke this via a `sys.resume` RPC if wired up.
+if [ "$1" = "resume" ]; then
+  n=0
+  if [ -f "$PHOSPHOR_HOME/stopped.pids" ]; then
+    for pid in $(cat "$PHOSPHOR_HOME/stopped.pids"); do
+      # PID may have exited and been recycled — verify it's still a
+      # stopped process before continuing it.
+      if [ -d "/proc/$pid" ] && grep -q ' T ' "/proc/$pid/stat" 2>/dev/null; then
+        kill -CONT "$pid" 2>/dev/null && n=$((n+1))
+      fi
+    done
+    rm -f "$PHOSPHOR_HOME/stopped.pids"
+  fi
+  log "phosphor-init: resumed $n stopped processes"
+  exit 0
+fi
 
 # ─── 1. Wait for the system to finish booting ──────────────────────
 # Android's boot-completed broadcast is the canonical signal.
@@ -53,7 +75,15 @@ adbd
 zygote
 zygote64
 init
+telecom
+ims
+radio
+ril
+cnd
+qmuxd
 "
+
+STOPPED_PIDS_FILE="$PHOSPHOR_HOME/stopped.pids"
 
 for pid in $(ls /proc | grep -E '^[0-9]+$'); do
   cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
@@ -67,10 +97,12 @@ for pid in $(ls /proc | grep -E '^[0-9]+$'); do
   [ "$skip" = "1" ] && continue
   # Don't kill our own process tree.
   [ "$pid" = "$$" ] && continue
-  # Politely stop first, then kill if needed.
-  kill -STOP $pid 2>/dev/null || true
+  # Politely stop first, then record so we can SIGCONT later.
+  if kill -STOP $pid 2>/dev/null; then
+    echo $pid >> "$STOPPED_PIDS_FILE"
+  fi
 done
-log "background services stopped (SIGSTOP'd)"
+log "background services stopped (SIGSTOP'd; pids recorded in $STOPPED_PIDS_FILE)"
 
 # ─── 3. Network up + DNS warm ──────────────────────────────────────
 log "ensuring network connectivity"

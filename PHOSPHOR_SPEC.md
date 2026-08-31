@@ -208,9 +208,9 @@ This is the whole point. Here's the loop:
 
 | Piece | Recommendation | Cost |
 |---|---|---|
-| **STT (speech-to-text)** | OpenAI Whisper API ($0.006/min) for accuracy, or **Whisper.cpp** on Tensor NPU for offline | $0–$5/mo |
+| **STT (speech-to-text)** | OpenAI Whisper API ($0.006/min) — **cloud-only today**; Whisper.cpp on Tensor NPU is planned, not wired | $0–$5/mo |
 | **LLM (the brain)** | **OpenRouter** — single API key, 200+ models. Default `anthropic/claude-sonnet-4.5`, fall back to `meta/llama-3.3-70b-instruct` | $5–$30/mo |
-| **TTS (speech back)** | OpenAI TTS-1-HD or ElevenLabs, or **Piper TTS** local for offline | $0–$22/mo |
+| **TTS (speech back)** | OpenAI TTS-1-HD or ElevenLabs — **cloud-only today**; Piper TTS local is planned, not wired | $0–$22/mo |
 | **Image gen** | `stability/sdxl` via OpenRouter when UI asks | ~$0.01/image |
 | **System prompt** | The design language. "You are the OS of Phosphor. Respond ONLY with valid HTML5 + inline CSS + inline JS. Viewport is 1080×2400px, touch-first, no keyboard. Use large tap targets (min 80px). Use `window.phosphor.*` JS API for actions. Never use external CDN — everything inline. Never use emoji unless requested. Prefer dark backgrounds with high-contrast text." | $0 |
 

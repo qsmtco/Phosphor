@@ -86,7 +86,8 @@ Done:
 
 Not done, in priority order:
 
-- [ ] Offline mode — llama.cpp + whisper.cpp paths are wired but not yet toggled on
+- [ ] Offline mode — llama.cpp + whisper.cpp paths are **not implemented**; the cloud paths (OpenRouter + Whisper API) are the only wired-up loop today. README line 40 describes intent, not current state.
+- [x] **Danger-gate** — the shell confirms sensitive bridge calls (`tel.dial`, `sms.send`, …) with a human tap before they reach the bridge; fetched web pages run in a same-origin-less sandbox.
 - [ ] Battery thermals + adaptive model switching
 - [ ] Multi-turn memory persistence
 - [ ] Geofence + push wake from sleep

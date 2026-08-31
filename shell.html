@@ -199,7 +199,7 @@ When a button needs to send the user back to a prompt, render:
  <button class="ph-btn" onclick="phosphor.ask('your follow-up question')">label</button>
 
 If the user asks for a web page, embed an <iframe> in the card with
-sandbox="allow-scripts allow-same-origin" src="https://..."`.
+sandbox="allow-scripts allow-forms" src="https://..."`;
 
 // Backfill CONFIG.systemPrompt now that DEFAULT_SYSTEM_PROMPT is in scope.
 if (!CONFIG.systemPrompt) CONFIG.systemPrompt = DEFAULT_SYSTEM_PROMPT;
@@ -213,6 +213,17 @@ if (!CONFIG.systemPrompt) CONFIG.systemPrompt = DEFAULT_SYSTEM_PROMPT;
    binary.
    ════════════════════════════════════════════════════════════════ */
 const BRIDGE_URL = 'ws://127.0.0.1:7777/ws';
+
+// Methods requiring explicit human confirmation before the bridge sees them.
+const DANGEROUS_METHODS = [
+  'tel.dial', 'sms.send',            // cost money / message people
+  'app.open', 'app.share',           // leave the sandbox
+  'kv.set', 'clip.write',            // mutate persisted state / clipboard
+  'screen.idle', 'brightness',       // change device power/display state
+];
+// Methods the user has allowed once this session (cleared by home()).
+const unlockedMethods = new Set();
+
 let ws = null;
 let wsReady = false;
 let callCounter = 0;
@@ -267,6 +278,16 @@ function connectBridge() {
 }
 
 function bridgeCall(method, params = {}) {
+  // ─── Danger gate ────────────────────────────────────────────────
+  // Methods that cost money, message people, or mutate device state get a
+  // hard confirmation card in the shell. The LLM can request them, but the
+  // tap that authorises them belongs to the human. This is a control, not
+  // a convention — it lives in the shell, where the LLM cannot reach it.
+  if (DANGEROUS_METHODS.includes(method)) {
+    // Per-session unlock: after the user allows a method once, repeat calls
+    // pass through for this turn. Cleared on home() (i.e. page reload).
+    if (!unlockedMethods.has(method)) return confirmCall(method, params);
+  }
   // Fall back to a stub if the bridge isn't up — lets you develop the
   // LLM-prompted UI on desktop without running the Rust binary.
   if (!wsReady) {
@@ -303,12 +324,41 @@ window.phosphor = {
   browse(url) {
     const ifr = `<iframe src="${escapeHtml(url)}"
       style="width:100%;height:80vh;border:0;background:#000"
-      sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`;
+      sandbox="allow-scripts allow-forms"></iframe>`;
     setScreen(`<div class="ph-card">${ifr}</div>`);
   },
-  // Reset to idle.
-  home() { location.reload(); },
+  // Reset to idle. Also re-arms every danger-gate confirmation.
+  home() { unlockedMethods.clear(); location.reload(); },
 };
+
+/* ──────────────────────────────────────────────────────────────
+   DANGER GATE — confirmation card for sensitive methods.
+   Renders a .ph-card describing the pending call; resolves only
+   after an explicit human tap. Rejects on Deny / card dismissal.
+   ────────────────────────────────────────────────────────────── */
+function confirmCall(method, params) {
+  return new Promise((resolve, reject) => {
+    const summary = escapeHtml(JSON.stringify(params, null, 1)).slice(0, 300);
+    setScreen(`
+      <div class="ph-card" style="border-color: var(--warn)">
+        <div class="ph-h">Allow ${escapeHtml(method)}?</div>
+        <div class="ph-sub">CONFIRMATION REQUIRED</div>
+        <pre style="font-size:12px;color:var(--fg-dim);white-space:pre-wrap;margin:0 0 16px">${summary}</pre>
+        <button class="ph-btn" id="ph-allow">Allow once</button>
+        <div style="height:10px"></div>
+        <button class="ph-btn ghost" id="ph-deny">Deny</button>
+      </div>
+    `);
+    $('#ph-allow').onclick = () => {
+      unlockedMethods.add(method);
+      resolve(bridgeCall(method, params));   // now passes the gate
+    };
+    $('#ph-deny').onclick = () => {
+      setScreen('<div class="ph-card">Blocked.</div>');
+      reject(new Error(`user denied: ${method}`));
+    };
+  });
+}
 
 connectBridge();
 

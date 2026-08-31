@@ -93,11 +93,10 @@ async fn main() -> Result<()> {
 
     tracing::info!("phosphor-bridge starting");
 
-    let state = Arc::new(
-        AppState::new()
-            .await
-            .context("initialising app state (DBus / Termux:API)")?,
-    );
+    // AppState::new() already returns Arc<AppState> — no second wrap.
+    let state = AppState::new()
+        .await
+        .context("initialising app state (DBus / Termux:API)")?;
 
     // Periodic background tasks: battery refresh, geofence polling.
     handlers::spawn_background_tasks(state.clone());
