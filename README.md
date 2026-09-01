@@ -1,8 +1,8 @@
-# Phosphor
-
 ![Phosphor logo](assets/phosphor-logo.jpg)
 
-A handheld where an LLM draws the next screen as HTML. You talk. It listens. The screen that appears is whatever the moment calls for.
+##An Experiment in Generative UIs
+
+A handheld where an LLM draws the next screen as HTML/js. You talk. It listens. The screen that appears is whatever the moment calls for.
 
 That's it. That's the whole product.
 
