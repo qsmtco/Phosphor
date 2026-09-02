@@ -16,7 +16,7 @@ Phosphor is my answer. The home screen is whatever I need in the moment. Sometim
 
 Three pieces. That's all.
 
-**A Pixel 8a running GrapheneOS.** Picked because Google's Tensor G3 NPU actually runs local LLMs at usable speed, and GrapheneOS gives me a base I can verify — no Google Play Services, no bloat I didn't install, no telemetry phoning home. Cost me $200 used from Swappa. Make sure you check the model number first because Verizon Pixels have a permanently-locked bootloader and I refuse to live under anyone's thumb on a device I bought.
+**A Pixel 8a running GrapheneOS.** Picked because Google's Tensor G3 NPU actually runs local LLMs at usable speed, and GrapheneOS gives me a base I can verify — no Google Play Services, no bloat I didn't install, no telemetry phoning home. Cost me $250 used from Swappa. Make sure you check the model number first because Verizon Pixels have a permanently-locked bootloader and I refuse to live under anyone's thumb on a device I bought.
 
 **A Rust binary that talks to the OS.** Phosphor's bridge is six hundred lines of Rust, it runs as root, binds `127.0.0.1:7777`, and exposes a JSON-RPC API. That's it. Every device capability — the modem, the GPS, the camera, NFC, Bluetooth, USB, the battery thermals, the clipboard — comes through as a method call. `tel.dial`. `geo.fix`. `battery.read`. No magic. No SDK. You could rewrite it in Python over a weekend if you really wanted to.
 
@@ -47,11 +47,11 @@ What I actually spent:
 
 | Item | Cost |
 |---|---|
-| Pixel 8a 128GB, factory unlocked, refurb | $200 |
+| Pixel 8a 128GB, factory unlocked, refurb | $250 |
 | USB-C cable + 30W charger + Spigen case | $45 |
 | OpenRouter (default LLM, 12 months at my usage) | $120 |
 | Whisper API (12 months at my usage) | $30 |
-| **Total** | **$395** |
+| **Total** | **$445** |
 
 No subscription. No in-app purchase. The phone is mine. The data stays on it sort of... The model calls go to OpenRouter so check to make sure the model you use, uses your data in a way that you can live with, and that's the end of it.
 
