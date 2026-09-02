@@ -4,7 +4,7 @@
 
 A handheld where an LLM draws the next screen as HTML/js. You talk. It listens. The screen that appears is whatever the moment calls for.
 
-That's it. That's the whole product.
+That's it. That's the whole idea.
 
 I built this because I got tired of the modern smartphone. Not the hardware — the hardware is fine. The model is broken. An operating system that hides everything behind icons you have to remember, arranged in a grid that some unimaginative arrogant slob at Google/Apple decided was the right metaphor for the seventeenth year in a row. Notifications designed by narcissist who hate you. Apps that demand permissions to spy on you. Forty-seven settings menus, none of which let you do the one thing you actually opened the app to do.
 
@@ -18,7 +18,7 @@ Three pieces. That's all.
 
 **A Pixel 8a running GrapheneOS.** Picked because Google's Tensor G3 NPU actually runs local LLMs at usable speed, and GrapheneOS gives me a base I can verify — no Google Play Services, no bloat I didn't install, no telemetry phoning home. Cost me $200 used from Swappa. Make sure you check the model number first because Verizon Pixels have a permanently-locked bootloader and I refuse to live under anyone's thumb on a device I bought.
 
-**A Rust binary that talks to the OS.** Twenty-eight thousand lines of Rust in production is a lot. Phosphor's bridge is six hundred. It runs as root, binds `127.0.0.1:7777`, and exposes a JSON-RPC API. That's it. Every device capability — the modem, the GPS, the camera, NFC, Bluetooth, USB, the battery thermals, the clipboard — comes through as a method call. `tel.dial`. `geo.fix`. `battery.read`. No magic. No SDK. You could rewrite it in Python over a weekend if you really wanted to.
+**A Rust binary that talks to the OS.** Phosphor's bridge is six hundred lines of Rust, it runs as root, binds `127.0.0.1:7777`, and exposes a JSON-RPC API. That's it. Every device capability — the modem, the GPS, the camera, NFC, Bluetooth, USB, the battery thermals, the clipboard — comes through as a method call. `tel.dial`. `geo.fix`. `battery.read`. No magic. No SDK. You could rewrite it in Python over a weekend if you really wanted to.
 
 **A browser locked into kiosk mode.** Vanadium, the GrapheneOS-maintained Chromium fork, held in a single tab by `cage`, a tiny Wayland compositor whose entire job is to fullscreen one window. The page it loads is `shell.html` — one static file that talks to the bridge over a WebSocket. When the model responds, it sends back HTML. The page swaps it in. No router. No state library. No bundler. It's the simplest thing that could possibly work. This is the layer that I am focused on the most right now.
 
