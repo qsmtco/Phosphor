@@ -123,6 +123,10 @@
   <div id="boot-status"><span class="ring"></span>CONNECTING</div>
 
   <!-- MAIN APP -->
+  <div id="voice-preview" style="display:none; position:fixed; left:12px; right:78px;
+       bottom: calc(env(safe-area-inset-bottom,0px) + 78px); padding:10px 14px;
+       background:var(--bg-soft,#111a11); border:1px solid var(--accent,#7cffb2);
+       border-radius:12px; color:#e8ecf4; font-size:15px; z-index:50;"></div>
   <div id="app">
     <div id="screen"></div>
     <div id="bar">
@@ -151,6 +155,25 @@ const CONFIG = {
 // ── NFC bridge (native side injects __phosphorNFCResolve; see ShellView.swift)
 // Generated agent screens can call window.phosphor.nfcScan() to authenticate.
 window.phosphor = window.phosphor || {};
+// ── Voice bridge: native mic button drives these.
+window.phosphor.voicePreview = function (text) {
+  const el = document.getElementById('voice-preview');
+  if (!el) return;
+  if (!text) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = '🎤 ' + text;
+};
+window.phosphor.voiceError = function (msg) {
+  const el = document.getElementById('voice-preview');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = '⚠ ' + msg;
+  setTimeout(() => { el.style.display = 'none'; }, 4000);
+};
+window.phosphor.sendFromVoice = function (text) {
+  window.phosphor.voicePreview('');
+  if (text && text.trim()) { send(text.trim()); }
+};
 window.phosphor.nfcScan = function (id) {
   return new Promise((resolve) => {
     const requestId = id || ('nfc-' + Date.now());

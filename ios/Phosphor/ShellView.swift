@@ -210,6 +210,7 @@ struct ShellView: UIViewRepresentable {
         }
 
         private var foregroundObserver: NSObjectProtocol?
+        private var evalObserver: NSObjectProtocol?
 
         override init() {
             super.init()
@@ -226,12 +227,24 @@ struct ShellView: UIViewRepresentable {
                     }
                 }
             }
+            // Voice/mic pipeline: evaluate JS in the page (mic transcript etc.)
+            evalObserver = NotificationCenter.default.addObserver(
+                forName: Notification.Name("phosphorEvalJSForShell"),
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                guard let js = note.userInfo?["js"] as? String else { return }
+                self?.webView?.evaluateJavaScript(js) { _, error in
+                    if let error = error {
+                        print("[ShellView] eval failed: \(error.localizedDescription)")
+                    }
+                }
+            }
         }
 
         deinit {
-            if let observer = foregroundObserver {
-                NotificationCenter.default.removeObserver(observer)
-            }
+            if let observer = foregroundObserver { NotificationCenter.default.removeObserver(observer) }
+            if let observer = evalObserver { NotificationCenter.default.removeObserver(observer) }
         }
 
         func webView(
@@ -241,6 +254,19 @@ struct ShellView: UIViewRepresentable {
         ) {
             guard let url = navigationAction.request.url else {
                 decisionHandler(.cancel)
+                return
+            }
+            // System scheme handoff: WKWebView cannot render these — hand to
+            // the OS (Phone, Messages, Mail, FaceTime). Cancel the in-webview
+            // navigation and open externally.
+            if let scheme = url.scheme?.lowercased(),
+               ["tel", "sms", "mailto", "facetime", "facetime-audio"].contains(scheme) {
+                decisionHandler(.cancel)
+                UIApplication.shared.open(url, options: [:]) { opened in
+                    if !opened {
+                        print("[ShellView] no handler for scheme \(scheme)")
+                    }
+                }
                 return
             }
             // Local/bundled content

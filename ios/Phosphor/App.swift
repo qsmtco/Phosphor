@@ -100,11 +100,67 @@ struct SetupView: View {
     }
 }
 
+// MARK: - Mic Button (push-to-talk overlay)
+
+struct MicButton: View {
+    @StateObject private var voice = VoiceController.shared
+    let onTranscript: (String) -> Void
+
+    var body: some View {
+        Button(action: { voice.toggle() }) {
+            ZStack {
+                Circle()
+                    .fill(voice.state == .recording
+                          ? Color(red: 1.0, green: 0.37, blue: 0.49)
+                          : Color(red: 0.29, green: 0.85, blue: 0.47))
+                    .frame(width: 56, height: 56)
+                    .shadow(color: (voice.state == .recording
+                        ? Color(red: 1.0, green: 0.37, blue: 0.49)
+                        : Color(red: 0.29, green: 0.85, blue: 0.47)).opacity(0.5),
+                        radius: voice.state == .recording ? 14 : 7)
+                Image(systemName: voice.state == .recording ? "stop.fill" : "mic.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(Color(red: 0.06, green: 0.14, blue: 0.10))
+            }
+        }
+        .onChange(of: voice.partialText) { _ in
+            // live partial preview is shown by the page via setVoicePreview
+            let p = voice.partialText
+            webViewEval("window.phosphor?.voicePreview?.(\(jsonString(p)))")
+        }
+        .onChange(of: voice.state) { newState in
+            if newState == .idle {
+                // stop() already delivered transcript via onTranscript
+            } else if case .error(let msg) = newState {
+                webViewEval("window.phosphor?.voiceError?.(\(jsonString(msg)))")
+            } else if newState == .denied {
+                webViewEval("window.phosphor?.voiceError?.('Microphone/Speech permission denied - enable in Settings')")
+            } else if newState == .unavailable {
+                webViewEval("window.phosphor?.voiceError?.('Speech recognition unavailable')")
+            }
+        }
+    }
+
+    private func jsonString(_ s: String) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: [s])
+        return String(data: data ?? Data("[]".utf8), encoding: .utf8).map { String($0.dropFirst().dropLast()) } ?? "''"
+    }
+
+    private func webViewEval(_ js: String) {
+        // Routed through the shared webView reference
+        NotificationCenter.default.post(
+            name: Notification.Name("phosphorEvalJS"),
+            object: nil,
+            userInfo: ["js": js])
+    }
+}
+
 // MARK: - App Entry Point
 
 @main
 struct PhosphorApp: App {
     @StateObject private var connectivity = ConnectivityMonitor()
+    @StateObject private var voice = VoiceController.shared
     @State private var reloadToken = 0
     @State private var configured = ServerConfig.isConfigured
 
@@ -127,7 +183,33 @@ struct PhosphorApp: App {
                 if configured && !connectivity.isOnline {
                     OfflineView(onRetry: { reloadToken += 1 })
                 }
+                if configured {
+                    MicButton { text in
+                        // Final transcript -> shell sends it as a message
+                        let js = "window.phosphor?.sendFromVoice?.(\(jsonEncode(text))); void 0"
+                        NotificationCenter.default.post(
+                            name: Notification.Name("phosphorEvalJS"),
+                            object: nil,
+                            userInfo: ["js": js])
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.init(top: 0, leading: 0, bottom: 96, trailing: 18))
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("phosphorEvalJS"))) { note in
+                if let js = note.userInfo?["js"] as? String {
+                    // The ShellView coordinator listens and evals in its webView
+                    NotificationCenter.default.post(
+                        name: Notification.Name("phosphorEvalJSForShell"),
+                        object: nil,
+                        userInfo: ["js": js])
+                }
             }
         }
+    }
+
+    private func jsonEncode(_ s: String) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: [s])
+        return String(data: data ?? Data("''".utf8), encoding: .utf8).map { String($0.dropFirst().dropLast()) } ?? "''"
     }
 }

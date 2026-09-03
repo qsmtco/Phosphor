@@ -46,6 +46,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         NFCReaderUsageDescription: "Phosphor uses NFC to authenticate you with a tag."
+        NSMicrophoneUsageDescription: "Phosphor uses the microphone for voice commands."
+        NSSpeechRecognitionUsageDescription: "Phosphor converts your speech to text to run commands."
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:
