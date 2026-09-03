@@ -145,8 +145,14 @@ struct PhosphorApp: App {
                     object: nil, userInfo: ["js": js])
             }
             .onReceive(voice.$state) { st in
-                // Push state + errors into the page; on idle, the final
-                // transcript is delivered via the onTranscript callback below.
+                // Push recording state into the page so the mic button turns
+                // red while recording (and back to green on stop).
+                let flag = (st == .recording) ? "true" : "false"
+                if let js = Self.jsCall("window.phosphor?.voiceState", [flag]) {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("phosphorEvalJSForShell"),
+                        object: nil, userInfo: ["js": js])
+                }
                 if case .error(let m) = st {
                     if let js = Self.jsCall("window.phosphor?.voiceError", [m]) {
                         NotificationCenter.default.post(
