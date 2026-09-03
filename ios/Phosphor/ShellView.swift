@@ -104,6 +104,7 @@ struct ShellView: UIViewRepresentable {
 
         let bridge = context.coordinator.bridge
         configuration.userContentController.add(bridge, name: "phosphorNFC")
+        configuration.userContentController.add(context.coordinator, name: "phosphorConfig")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsLinkPreview = false
@@ -172,15 +173,37 @@ struct ShellView: UIViewRepresentable {
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         coordinator.bridge.tearDown()
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorNFC")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorConfig")
     }
 
     // MARK: - Coordinator
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let bridge = NFCBridge()
         weak var webView: WKWebView?
         var lastReloadToken: Int = 0
+
+        // MARK: config save from the page (setup screen)
+        nonisolated func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard message.name == "phosphorConfig" else { return }
+            Task { @MainActor in
+                guard let dict = message.body as? [String: Any] else { return }
+                let server = (dict["server"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let token = (dict["token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !server.isEmpty, !token.isEmpty else { return }
+                UserDefaults.standard.set(server, forKey: "ph.server")
+                UserDefaults.standard.set(token, forKey: "ph.token")
+                print("[Phosphor] config saved: server=\(server)")
+                // Reload so the userscript re-injects the new values
+                if let shellURL = Self.locateShell() {
+                    webView?.loadFileURL(shellURL, allowingReadAccessTo: shellURL.deletingLastPathComponent())
+                }
+            }
+        }
 
         private var foregroundObserver: NSObjectProtocol?
 

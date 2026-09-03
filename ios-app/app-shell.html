@@ -180,9 +180,20 @@ function renderSetup() {
               padding:10px 22px; font-weight:600; cursor:pointer;">Save & connect</button>
     </div>`;
   document.getElementById('su-save').onclick = () => {
-    localStorage.setItem('ph:server', document.getElementById('su-server').value.trim());
-    localStorage.setItem('ph:token',  document.getElementById('su-token').value.trim());
-    location.reload();
+    const server = document.getElementById('su-server').value.trim();
+    const token  = document.getElementById('su-token').value.trim();
+    if (!server || !token) return;
+    // Native path (iOS): save to UserDefaults + native reload — localStorage is
+    // not persistent for file:// pages in WKWebView.
+    if (window.webkit?.messageHandlers?.phosphorConfig) {
+      window.webkit.messageHandlers.phosphorConfig.postMessage({ server, token });
+      CONFIG.server = server; CONFIG.token = token;
+      boot();
+    } else {
+      localStorage.setItem('ph:server', server);
+      localStorage.setItem('ph:token',  token);
+      location.reload();
+    }
   };
 }
 function addStyleOnce() {
