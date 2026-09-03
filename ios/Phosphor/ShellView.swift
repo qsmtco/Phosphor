@@ -28,6 +28,10 @@ enum ServerConfig {
     static var isConfigured: Bool {
         !server.isEmpty && !token.isEmpty
     }
+    static func save(server: String, token: String) {
+        UserDefaults.standard.set(server, forKey: "ph.server")
+        UserDefaults.standard.set(token, forKey: "ph.token")
+    }
 }
 
 struct ShellView: UIViewRepresentable {

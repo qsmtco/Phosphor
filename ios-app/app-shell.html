@@ -165,49 +165,19 @@ window.phosphor.nfcScan = function (id) {
 
 function needsSetup() { return !CONFIG.token; }
 function renderSetup() {
+  // On iOS the setup form is NATIVE (SwiftUI) - if we land here unconfigured,
+  // just show a notice; the app remounts the shell with config after save.
+  const native = !!window.webkit?.messageHandlers?.phosphorConfig;
   const s = document.getElementById('screen');
   s.innerHTML = `
     <div style="background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; margin-top:40px;">
-      <div style="font-size:18px; font-weight:600; margin-bottom:6px;">Connect to DragonCakes</div>
-      <div style="font-size:11px; color:var(--fg-dim); margin-bottom:10px;">build ${new Date().toISOString().slice(0,10)} · native bridge: ${window.webkit?.messageHandlers?.phosphorConfig ? 'YES' : 'NO'}</div>
-      <div style="font-size:13px; color:var(--fg-dim); margin-bottom:16px;">
-        Paste the server address and access token (from the server's <code>.env</code>).
+      <div style="font-size:18px; font-weight:600; margin-bottom:6px;">No configuration</div>
+      <div style="font-size:13px; color:var(--fg-dim);">
+        ${native
+          ? 'No server saved yet. Restart the app to enter settings.'
+          : 'Desktop test mode: set localStorage ph:server and ph:token, then reload.'}
       </div>
-      <input id="su-server" class="ph-input" placeholder="http://192.168.x.x:8787"
-             value="${CONFIG.server}" style="width:100%; margin-bottom:10px;" />
-      <input id="su-token" type="password" placeholder="access token (dcui_…)"
-             style="width:100%; margin-bottom:16px;" />
-      <button id="su-save" style="background:var(--accent); border:none; border-radius:12px;
-              padding:10px 22px; font-weight:600; cursor:pointer;">Save & connect</button>
     </div>`;
-  document.getElementById('su-save').onclick = () => {
-    const server = document.getElementById('su-server').value.trim();
-    const token  = document.getElementById('su-token').value.trim();
-    if (!server || !token) return;
-    // Native path (iOS): save to UserDefaults + native reload — localStorage is
-    // not persistent for file:// pages in WKWebView.
-    if (window.webkit?.messageHandlers?.phosphorConfig) {
-      window.webkit.messageHandlers.phosphorConfig.postMessage({ server, token });
-      CONFIG.server = server; CONFIG.token = token;
-      boot();
-    } else {
-      // No native bridge: try localStorage, and SHOW whether it can persist.
-      let persisted = false;
-      try {
-        localStorage.setItem('ph:server', server);
-        localStorage.setItem('ph:token',  token);
-        persisted = localStorage.getItem('ph:token') === token;
-      } catch (e) { persisted = false; }
-      if (persisted) {
-        location.reload();
-      } else {
-        const warn = document.createElement('div');
-        warn.style.cssText = 'background:rgba(255,94,124,.15);border:1px solid rgba(255,94,124,.4);border-radius:10px;padding:10px 14px;margin-top:12px;color:#ff8ba0;font-size:13px;';
-        warn.textContent = 'Cannot save settings — update the app from TestFlight to the latest build.';
-        document.querySelector('.ph-card')?.appendChild(warn);
-      }
-    }
-  };
 }
 function addStyleOnce() {
   const st = document.createElement('style');
