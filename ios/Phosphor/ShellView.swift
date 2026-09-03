@@ -142,7 +142,7 @@ struct ShellView: UIViewRepresentable {
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
             context.coordinator.bridge.tearDown()
-            if let shellURL = Self.locateShell() {
+            if let shellURL = ShellView.locateShell() {
                 uiView.loadFileURL(shellURL, allowingReadAccessTo: shellURL.deletingLastPathComponent())
             }
         }
@@ -199,7 +199,7 @@ struct ShellView: UIViewRepresentable {
                 UserDefaults.standard.set(token, forKey: "ph.token")
                 print("[Phosphor] config saved: server=\(server)")
                 // Reload so the userscript re-injects the new values
-                if let shellURL = Self.locateShell() {
+                if let shellURL = ShellView.locateShell() {
                     webView?.loadFileURL(shellURL, allowingReadAccessTo: shellURL.deletingLastPathComponent())
                 }
             }
