@@ -110,17 +110,10 @@
 </head>
 <body>
 
-  <!-- SPLASH -->
+  <!-- SPLASH (approved brand image) -->
   <div id="splash">
-    <div class="glyph-wrap">
-      <div class="glyph-glow"></div>
-      <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="62" cy="56" r="30" stroke="#f2f4f8" stroke-width="9"/>
-        <circle cx="62" cy="56" r="10.5" fill="#f2f4f8"/>
-        <path d="M 44 82 Q 40 96 34 104" stroke="#f2f4f8" stroke-width="9" stroke-linecap="round"/>
-      </svg>
-    </div>
-    <div class="wordmark">Phosphor</div>
+    <img src="assets/splash-approved.jpg" alt="" style="position:absolute; inset:0;
+         width:100%; height:100%; object-fit:cover;" />
   </div>
   <div id="boot-status"><span class="ring"></span>CONNECTING</div>
 
@@ -207,7 +200,7 @@ function voiceLive(text) {
     liveBubble.innerHTML = '<span></span>';
     $('#screen').appendChild(liveBubble);
   }
-  liveBubble.querySelector('span').textContent = '🎤 ' + text;
+  liveBubble.querySelector('span').textContent = text;
   $('#screen').scrollTop = $('#screen').scrollHeight;
 }
 
@@ -251,7 +244,8 @@ window.phosphor.micToggle = function () {
   }
 };
 window.phosphor.voicePreview = function (text) {
-  // partial results render as a live chat bubble
+  if (Array.isArray(text)) text = text[0];
+  text = String(text == null ? '' : text);
   if (text) voiceLive(text); else voiceLive('');
 };
 window.phosphor.voiceError = function (msg) {
@@ -263,8 +257,10 @@ window.phosphor.voiceState = function (recording) {
   if (mic) mic.classList.toggle('recording', recording === true || recording === 'true');
 };
 window.phosphor.sendFromVoice = function (text) {
+  if (Array.isArray(text)) text = text[0];
+  text = String(text == null ? '' : text);
   voiceLive('');
-  if (text && text.trim()) send(text.trim());
+  if (text.trim()) send(text.trim());
 };
 // scheme handoff for generated screens (tel:, sms:, mailto: handled natively
 // via navigation policy; this helper opens via location for robustness)

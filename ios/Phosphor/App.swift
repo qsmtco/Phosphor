@@ -175,6 +175,13 @@ struct PhosphorApp: App {
     }
 
         nonisolated static func jsCall(_ tmpl: String, _ args: [String]) -> String? {
+        // Single-arg calls pass the value directly (sendFromVoice("hi")),
+        // NOT as a JSON array - the page functions expect plain strings.
+        if args.count == 1 {
+            guard let data = try? JSONSerialization.data(withJSONObject: [args[0]]),
+                  let list = String(data: data, encoding: .utf8) else { return nil }
+            return "\(tmpl)(\(list.dropFirst().dropLast())); void 0"
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: args),
               let list = String(data: data, encoding: .utf8) else { return nil }
         return "\(tmpl)(\(list)); void 0"
