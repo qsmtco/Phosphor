@@ -36,6 +36,10 @@ targets:
         buildPhase: resources
       - path: ../ios-app/splash.html
         buildPhase: resources
+      # Splash/brand assets (folder copied as-is, keeps relative paths)
+      - path: ../ios-app/assets
+        type: folder
+        buildPhase: resources
     info:
       path: Phosphor/Info.plist
       properties:
