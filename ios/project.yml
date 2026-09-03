@@ -39,6 +39,16 @@ targets:
       path: Phosphor/Info.plist
       properties:
         CFBundleDisplayName: "Phosphor"
+        CFBundleDevelopmentRegion: "en"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        LSRequiresIPhoneOS: true
+        NFCReaderUsageDescription: "Phosphor uses NFC to authenticate you with a tag."
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - "UIInterfaceOrientationPortrait"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.qsmtco.phosphor.app
