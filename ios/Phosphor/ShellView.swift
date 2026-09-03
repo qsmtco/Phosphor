@@ -85,8 +85,8 @@ struct ShellView: UIViewRepresentable {
 
         // ── Server config injection (document start, page world) ──
         let server = ServerConfig.server
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: """, with: "\\\"")
+            .replacingOccurrences(of: "\\", with: "")
+            .replacingOccurrences(of: "\n", with: "")
         let token = ServerConfig.token
         let configJS = """
         window.PH_SERVER = "\(server)";
