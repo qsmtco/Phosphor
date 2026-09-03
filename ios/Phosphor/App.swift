@@ -113,20 +113,27 @@ struct MicButton: View {
                     .fill(voice.state == .recording
                           ? Color(red: 1.0, green: 0.37, blue: 0.49)
                           : Color(red: 0.29, green: 0.85, blue: 0.47))
-                    .frame(width: 56, height: 56)
+                    .frame(width: 37, height: 37)
                     .shadow(color: (voice.state == .recording
                         ? Color(red: 1.0, green: 0.37, blue: 0.49)
                         : Color(red: 0.29, green: 0.85, blue: 0.47)).opacity(0.5),
-                        radius: voice.state == .recording ? 14 : 7)
+                        radius: voice.state == .recording ? 9 : 5)
                 Image(systemName: voice.state == .recording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Color(red: 0.06, green: 0.14, blue: 0.10))
             }
         }
-        .onChange(of: voice.partialText) { _ in
-            // live partial preview is shown by the page via setVoicePreview
-            let p = voice.partialText
-            webViewEval("window.phosphor?.voicePreview?.(\(jsonString(p)))")
+        .onAppear {
+            // Wire the controller's transcript callback to this button's handler.
+            // (BUGFIX: previously nothing assigned voice.onTranscript, so the
+            // final transcript was silently dropped on stop.)
+            voice.onTranscript = { text in
+                onTranscript(text)
+            }
+        }
+        .onChange(of: voice.partialText) { newValue in
+            // live partial preview is shown by the page via voicePreview
+            webViewEval("window.phosphor?.voicePreview?.(\(jsonString(newValue)))")
         }
         .onChange(of: voice.state) { newState in
             if newState == .idle {

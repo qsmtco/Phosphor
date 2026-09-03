@@ -62,30 +62,12 @@
     flex: 1;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 20px 16px calc(env(safe-area-inset-bottom, 0px) + 84px);
+    padding: 20px 16px calc(env(safe-area-inset-bottom, 0px) + 24px);
     scroll-behavior: smooth;
   }
   #screen > * { animation: fadein .25s ease-out; }
   @keyframes fadein { from { opacity:0; transform:translateY(6px);} to {opacity:1; transform:none;} }
 
-  #bar {
-    position: fixed; left: 0; right: 0;
-    bottom: 0;
-    padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
-    display: flex; gap: 8px;
-    background: linear-gradient(to top, rgba(27,28,33,0.98), rgba(27,28,33,0.85));
-    border-top: 1px solid var(--line);
-  }
-  #input {
-    flex: 1;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 22px;
-    color: var(--fg);
-    font-size: 16px;
-    padding: 12px 18px;
-    outline: none;
-  }
   #input:focus { border-color: var(--accent); }
   #send, #reset {
     border: none; border-radius: 22px; padding: 0 18px;
@@ -124,16 +106,12 @@
 
   <!-- MAIN APP -->
   <div id="voice-preview" style="display:none; position:fixed; left:12px; right:78px;
-       bottom: calc(env(safe-area-inset-bottom,0px) + 78px); padding:10px 14px;
+       bottom: calc(env(safe-area-inset-bottom,0px) + 30px); padding:10px 14px;
        background:var(--bg-soft,#111a11); border:1px solid var(--accent,#7cffb2);
        border-radius:12px; color:#e8ecf4; font-size:15px; z-index:50;"></div>
   <div id="app">
     <div id="screen"></div>
-    <div id="bar">
-      <button id="reset" title="clear session">⟲</button>
-      <input id="input" type="text" placeholder="Ask anything…" autocomplete="off" />
-      <button id="send">➤</button>
-    </div>
+    
   </div>
 
 <script>
@@ -277,7 +255,6 @@ async function send(text) {
   if (!text.trim()) { dbg('blocked: empty'); return; }
   if (state.busy) { dbg('blocked: busy'); return; }
   state.busy = true;
-  $('#send').disabled = true;
   // echo user bubble
   setScreen(`<div style="text-align:right; margin:10px 0;">
       <span style="background:rgba(124,255,178,.15); border:1px solid rgba(124,255,178,.3);
@@ -299,9 +276,7 @@ async function send(text) {
     setScreen(`<div class="err-card">⚠ ${String(e.message || e).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>`, true);
   } finally {
     state.busy = false;
-    $('#send').disabled = false;
-    $('#input').focus();
-  }
+    }
 }
 const state = { busy: false };
 
@@ -339,15 +314,12 @@ async function boot() {
   document.getElementById('app').classList.add('show');
   setScreen(`<div style="text-align:center; margin-top:34vh; color:var(--fg-dim); font-size:14px; letter-spacing:.2em;">
       PHOSPHOR READY</div>`);
-  $('#input').focus();
 }
 
-$('#send').onclick = () => { dbg('send button clicked'); send($('#input').value); $('#input').value = ''; };
-$('#input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { dbg('enter pressed'); send($('#input').value); $('#input').value = ''; }
-});
-document.addEventListener('DOMContentLoaded', () => dbg('DOM ready, listeners bound'));
-dbg('script parsed, listeners binding...');
+// Voice-only UI: no input bar. send() fires from window.phosphor.sendFromVoice
+// (native mic pipeline) or window.phosphor.ask() from generated screens.
+document.addEventListener('DOMContentLoaded', () => dbg('DOM ready, voice-only mode'));
+dbg('script parsed (voice-only)');
 $('#reset').onclick = async () => {
   await fetch(CONFIG.server + '/reset', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
