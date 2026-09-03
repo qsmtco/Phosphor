@@ -1,0 +1,45 @@
+name: Phosphor
+options:
+  bundleIdPrefix: com.qsmtco.phosphor
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+
+# Source of truth for the Xcode project. CI runs `xcodegen generate`.
+# The .xcodeproj is gitignored — edit this file, never pbxproj.
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    DEVELOPMENT_TEAM: "TEAM_ID"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "Apple Development"
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "0"
+    GENERATE_INFOPLIST_FILE: NO
+
+targets:
+  Phosphor:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: Phosphor
+        excludes:
+          - "Info.plist"
+          - "Phosphor.entitlements"
+      # Web shell (app-shell.html, splash.html) bundled as resources
+      - path: ../ios-app
+        type: folder
+        buildPhase: resources
+    info:
+      path: Phosphor/Info.plist
+      properties:
+        CFBundleDisplayName: "Phosphor"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.qsmtco.phosphor.app
+        CODE_SIGN_ENTITLEMENTS: Phosphor/Phosphor.entitlements

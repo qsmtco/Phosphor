@@ -138,11 +138,29 @@
    The iOS app will inject these (or prompt once, stored in localStorage).
    ════════════════════════════════════════════════════════════════ */
 const CONFIG = {
-  // When testing from the same machine, same-origin via the tunnel or direct:
-  server: localStorage.getItem('ph:server') || 'http://127.0.0.1:8787',
-  token:  localStorage.getItem('ph:token')  || '',
+  // iOS app injects window.PH_SERVER / PH_TOKEN via userscript before we run.
+  // Desktop test harness falls back to localStorage / defaults.
+  server: (typeof PH_SERVER !== 'undefined' && PH_SERVER) ||
+          localStorage.getItem('ph:server') || 'http://127.0.0.1:8787',
+  token:  (typeof PH_TOKEN !== 'undefined' && PH_TOKEN) ||
+          localStorage.getItem('ph:token')  || '',
   session: 'ios-' + (localStorage.getItem('ph:session') ||
                      Math.random().toString(36).slice(2, 10)),
+};
+
+// ── NFC bridge (native side injects __phosphorNFCResolve; see ShellView.swift)
+// Generated agent screens can call window.phosphor.nfcScan() to authenticate.
+window.phosphor = window.phosphor || {};
+window.phosphor.nfcScan = function (id) {
+  return new Promise((resolve) => {
+    const requestId = id || ('nfc-' + Date.now());
+    if (window.webkit?.messageHandlers?.phosphorNFC) {
+      window.__phosphorNFCRegister(requestId, resolve);
+      window.webkit.messageHandlers.phosphorNFC.postMessage({ requestId });
+    } else {
+      resolve({ requestId, error: 'unavailable' });  // desktop: no NFC
+    }
+  });
 };
 
 function needsSetup() { return !CONFIG.token; }
