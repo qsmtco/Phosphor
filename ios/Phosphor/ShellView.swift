@@ -192,7 +192,8 @@ struct ShellView: UIViewRepresentable {
                 return
             }
             // Google fonts + images are used by generated screens
-            if host == "fonts.googleapis.com" || host == "fonts.gstatic.com" {
+            if url.host?.lowercased() == "fonts.googleapis.com" ||
+               url.host?.lowercased() == "fonts.gstatic.com" {
                 decisionHandler(.allow)
                 return
             }
