@@ -169,6 +169,7 @@ function renderSetup() {
   s.innerHTML = `
     <div style="background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; margin-top:40px;">
       <div style="font-size:18px; font-weight:600; margin-bottom:6px;">Connect to DragonCakes</div>
+      <div style="font-size:11px; color:var(--fg-dim); margin-bottom:10px;">build ${new Date().toISOString().slice(0,10)} · native bridge: ${window.webkit?.messageHandlers?.phosphorConfig ? 'YES' : 'NO'}</div>
       <div style="font-size:13px; color:var(--fg-dim); margin-bottom:16px;">
         Paste the server address and access token (from the server's <code>.env</code>).
       </div>
@@ -190,9 +191,21 @@ function renderSetup() {
       CONFIG.server = server; CONFIG.token = token;
       boot();
     } else {
-      localStorage.setItem('ph:server', server);
-      localStorage.setItem('ph:token',  token);
-      location.reload();
+      // No native bridge: try localStorage, and SHOW whether it can persist.
+      let persisted = false;
+      try {
+        localStorage.setItem('ph:server', server);
+        localStorage.setItem('ph:token',  token);
+        persisted = localStorage.getItem('ph:token') === token;
+      } catch (e) { persisted = false; }
+      if (persisted) {
+        location.reload();
+      } else {
+        const warn = document.createElement('div');
+        warn.style.cssText = 'background:rgba(255,94,124,.15);border:1px solid rgba(255,94,124,.4);border-radius:10px;padding:10px 14px;margin-top:12px;color:#ff8ba0;font-size:13px;';
+        warn.textContent = 'Cannot save settings — update the app from TestFlight to the latest build.';
+        document.querySelector('.ph-card')?.appendChild(warn);
+      }
     }
   };
 }
