@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#1c1e2a" />
+<title>Phosphor</title>
+<!--
+  Phosphor · app-shell.html (DESKTOP TESTHARNESS)
+  ────────────────────────────────────────────────
+  Same screen-rendering logic the iOS app uses, wrapped in a desktop-testable
+  page. Opens in any browser. Talks to the DragonCakes UI server.
+
+  Flow: splash (from splash.html) → connect check → conversation loop.
+  Each agent reply renders as a full screen (generative UI), with a small
+  transcript dock and an input bar.
+
+  This file embeds splash.html's markup so the iOS wrapper can later replace
+  this page wholesale — the Swift app will own splash → shell transition.
+-->
+<style>
+  :root {
+    --bg-top: #242632; --bg-mid: #1c1d22; --bg-bottom: #1b1c21;
+    --fg: #e8ecf4; --fg-dim: #6a7080; --accent: #7cffb2;
+    --card: rgba(255,255,255,0.06); --line: rgba(255,255,255,0.12);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 55%, var(--bg-bottom) 100%);
+    color: var(--fg);
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ── splash (embed of splash.html) ─────────────────────────── */
+  #splash { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 8px;
+            background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 55%, var(--bg-bottom) 100%);
+            transition: opacity 0.6s ease-out; }
+  #splash.hide { opacity: 0; pointer-events: none; }
+  .glyph-wrap { position: relative; width: 120px; height: 120px; }
+  .glyph-glow { position: absolute; inset: -70px;
+    background: radial-gradient(circle, rgba(232,236,244,0.28) 0%, rgba(232,236,244,0.08) 40%, transparent 70%);
+    animation: breathe 3.2s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity:.75; transform:scale(1);} 50% { opacity:1; transform:scale(1.06);} }
+  .wordmark { font-size: 44px; font-weight: 300; letter-spacing: .5px; color: #dfe4ee;
+              text-shadow: 0 0 24px rgba(232,236,244,.25); }
+  #boot-status { position: fixed; bottom: calc(env(safe-area-inset-bottom,0px) + 28px);
+                 left:0; right:0; text-align:center; font-size:12px; letter-spacing:.18em; color:#6a7080; }
+  #boot-status .ring, .ring { display:inline-block; width:10px; height:10px;
+    border:1.5px solid #3a3f4c; border-top-color:#9aa2b2; border-radius:50%;
+    vertical-align:-1px; margin-right:8px; animation:spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── main app ──────────────────────────────────────────────── */
+  #app { position: fixed; inset: 0; display: none; flex-direction: column; }
+  #app.show { display: flex; }
+
+  #screen {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 20px 16px calc(env(safe-area-inset-bottom, 0px) + 84px);
+    scroll-behavior: smooth;
+  }
+  #screen > * { animation: fadein .25s ease-out; }
+  @keyframes fadein { from { opacity:0; transform:translateY(6px);} to {opacity:1; transform:none;} }
+
+  #bar {
+    position: fixed; left: 0; right: 0;
+    bottom: 0;
+    padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+    display: flex; gap: 8px;
+    background: linear-gradient(to top, rgba(27,28,33,0.98), rgba(27,28,33,0.85));
+    border-top: 1px solid var(--line);
+  }
+  #input {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    color: var(--fg);
+    font-size: 16px;
+    padding: 12px 18px;
+    outline: none;
+  }
+  #input:focus { border-color: var(--accent); }
+  #send, #reset {
+    border: none; border-radius: 22px; padding: 0 18px;
+    font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  #send { background: var(--accent); color: #10241a; }
+  #send:disabled { opacity: .4; }
+  #reset { background: transparent; color: var(--fg-dim); border: 1px solid var(--line); }
+
+  .thinking { display:flex; align-items:center; gap:8px; color:var(--fg-dim);
+              font-size:13px; letter-spacing:.14em; padding: 6px 4px; }
+  .thinking .dots span { animation: blink 1.2s infinite; display:inline-block; }
+  .thinking .dots span:nth-child(2){ animation-delay:.2s; }
+  .thinking .dots span:nth-child(3){ animation-delay:.4s; }
+  @keyframes blink { 0%,80%,100%{opacity:.2;} 40%{opacity:1;} }
+
+  .err-card { background: rgba(255,94,124,.12); border:1px solid rgba(255,94,124,.4);
+              border-radius:12px; padding:14px; color:#ff8ba0; font-size:14px; }
+</style>
+</head>
+<body>
+
+  <!-- SPLASH -->
+  <div id="splash">
+    <div class="glyph-wrap">
+      <div class="glyph-glow"></div>
+      <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="62" cy="56" r="30" stroke="#f2f4f8" stroke-width="9"/>
+        <circle cx="62" cy="56" r="10.5" fill="#f2f4f8"/>
+        <path d="M 44 82 Q 40 96 34 104" stroke="#f2f4f8" stroke-width="9" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="wordmark">Phosphor</div>
+  </div>
+  <div id="boot-status"><span class="ring"></span>CONNECTING</div>
+
+  <!-- MAIN APP -->
+  <div id="app">
+    <div id="screen"></div>
+    <div id="bar">
+      <button id="reset" title="clear session">⟲</button>
+      <input id="input" type="text" placeholder="Ask anything…" autocomplete="off" />
+      <button id="send">➤</button>
+    </div>
+  </div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   CONFIG — server endpoint + auth token.
+   The iOS app will inject these (or prompt once, stored in localStorage).
+   ════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  // When testing from the same machine, same-origin via the tunnel or direct:
+  server: localStorage.getItem('ph:server') || 'http://127.0.0.1:8787',
+  token:  localStorage.getItem('ph:token')  || '',
+  session: 'ios-' + (localStorage.getItem('ph:session') ||
+                     Math.random().toString(36).slice(2, 10)),
+};
+
+function needsSetup() { return !CONFIG.token; }
+function renderSetup() {
+  const s = document.getElementById('screen');
+  s.innerHTML = `
+    <div style="background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; margin-top:40px;">
+      <div style="font-size:18px; font-weight:600; margin-bottom:6px;">Connect to DragonCakes</div>
+      <div style="font-size:13px; color:var(--fg-dim); margin-bottom:16px;">
+        Paste the server address and access token (from the server's <code>.env</code>).
+      </div>
+      <input id="su-server" class="ph-input" placeholder="http://192.168.x.x:8787"
+             value="${CONFIG.server}" style="width:100%; margin-bottom:10px;" />
+      <input id="su-token" type="password" placeholder="access token (dcui_…)"
+             style="width:100%; margin-bottom:16px;" />
+      <button id="su-save" style="background:var(--accent); border:none; border-radius:12px;
+              padding:10px 22px; font-weight:600; cursor:pointer;">Save & connect</button>
+    </div>`;
+  document.getElementById('su-save').onclick = () => {
+    localStorage.setItem('ph:server', document.getElementById('su-server').value.trim());
+    localStorage.setItem('ph:token',  document.getElementById('su-token').value.trim());
+    location.reload();
+  };
+}
+function addStyleOnce() {
+  const st = document.createElement('style');
+  st.textContent = `.ph-input{background:var(--card);border:1px solid var(--line);
+    border-radius:10px;color:var(--fg);padding:10px 14px;font-size:15px;outline:none;}`;
+  document.head.appendChild(st);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SCREEN RENDERING
+   ════════════════════════════════════════════════════════════════ */
+const $ = (sel) => document.querySelector(sel);
+
+function setScreen(html, append = false) {
+  const s = $('#screen');
+  if (append) {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    s.appendChild(wrap);
+  } else {
+    s.innerHTML = html;
+  }
+  s.scrollTop = s.scrollHeight;
+}
+
+function showThinking(on) {
+  const old = document.getElementById('thinking');
+  if (old) old.remove();
+  if (on) {
+    const el = document.createElement('div');
+    el.className = 'thinking'; el.id = 'thinking';
+    el.innerHTML = '<span class="ring"></span>THINKING <span class="dots"><span>·</span><span>·</span><span>·</span></span>';
+    $('#screen').appendChild(el);
+    $('#screen').scrollTop = $('#screen').scrollHeight;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SERVER API
+   ════════════════════════════════════════════════════════════════ */
+async function sendMessage(text) {
+  const res = await fetch(CONFIG.server + '/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: text, key: CONFIG.token, session: CONFIG.session }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || ('HTTP ' + res.status));
+  }
+  return data;
+}
+
+async function send(text) {
+  if (!text.trim() || state.busy) return;
+  state.busy = true;
+  $('#send').disabled = true;
+  // echo user bubble
+  setScreen(`<div style="text-align:right; margin:10px 0;">
+      <span style="background:rgba(124,255,178,.15); border:1px solid rgba(124,255,178,.3);
+        border-radius:14px 14px 4px 14px; padding:9px 14px; display:inline-block; font-size:15px;">
+        ${text.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}
+      </span></div>`, true);
+  showThinking(true);
+  try {
+    const data = await sendMessage(text);
+    showThinking(false);
+    if (data.html) {
+      setScreen(data.html, true);
+    } else {
+      setScreen(`<div style="color:var(--fg); font-size:16px; padding:8px 4px;">${data.text}</div>`, true);
+    }
+  } catch (e) {
+    showThinking(false);
+    setScreen(`<div class="err-card">⚠ ${String(e.message || e).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>`, true);
+  } finally {
+    state.busy = false;
+    $('#send').disabled = false;
+    $('#input').focus();
+  }
+}
+const state = { busy: false };
+
+/* ════════════════════════════════════════════════════════════════
+   BOOT SEQUENCE
+   ════════════════════════════════════════════════════════════════ */
+async function boot() {
+  addStyleOnce();
+  const status = document.getElementById('boot-status');
+  const setStatus = (t) => status.innerHTML = '<span class="ring"></span>' + t;
+
+  if (needsSetup()) { setStatus('SETUP'); document.getElementById('splash').classList.add('hide');
+                      document.getElementById('app').classList.add('show'); renderSetup(); return; }
+
+  try {
+    setStatus('CONNECTING');
+    const res = await fetch(CONFIG.server + '/health');
+    if (!res.ok) throw new Error('bad status');
+    const h = await res.json();
+    if (!h.ok) throw new Error('unhealthy');
+  } catch (e) {
+    setStatus('SERVER UNREACHABLE — CHECK SETUP');
+    await new Promise(r => setTimeout(r, 1200));
+    document.getElementById('splash').classList.add('hide');
+    document.getElementById('app').classList.add('show');
+    renderSetup();
+    return;
+  }
+
+  setStatus('READY');
+  await new Promise(r => setTimeout(r, 450));
+  document.getElementById('splash').classList.add('hide');
+  document.getElementById('app').classList.add('show');
+  setScreen(`<div style="text-align:center; margin-top:34vh; color:var(--fg-dim); font-size:14px; letter-spacing:.2em;">
+      PHOSPHOR READY</div>`);
+  $('#input').focus();
+}
+
+$('#send').onclick = () => { send($('#input').value); $('#input').value = ''; };
+$('#input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { send($('#input').value); $('#input').value = ''; }
+});
+$('#reset').onclick = async () => {
+  await fetch(CONFIG.server + '/reset', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: CONFIG.token, session: CONFIG.session })
+  });
+  setScreen('<div style="text-align:center; color:var(--fg-dim); margin-top:30vh;">session cleared</div>');
+};
+
+boot();
+</script>
+</body>
+</html>

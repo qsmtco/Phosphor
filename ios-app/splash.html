@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#1c1e2a" />
+<title>Phosphor</title>
+<!--
+  Phosphor · splash.html
+  ──────────────────────
+  Launch splash for the iOS app. Shown by app-shell.html while the
+  server connection is established. Recreates the brand splash image
+  (dark gradient + glowing P glyph + wordmark) in pure CSS/HTML so it
+  renders pixel-sharp at any resolution, then fades out.
+-->
+<style>
+  :root {
+    --bg-top: #242632;
+    --bg-mid: #1c1d22;
+    --bg-bottom: #1b1c21;
+    --glow: #e8ecf4;
+    --wordmark: #dfe4ee;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-mid) 55%, var(--bg-bottom) 100%);
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #splash {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    opacity: 1;
+    transition: opacity 0.6s ease-out;
+  }
+  #splash.hide { opacity: 0; pointer-events: none; }
+
+  /* Glyph: the Phosphor P-orb, drawn as SVG for pixel-perfect scaling */
+  .glyph-wrap { position: relative; width: 120px; height: 120px; }
+  .glyph-glow {
+    position: absolute; inset: -70px;
+    background: radial-gradient(circle, rgba(232,236,244,0.28) 0%, rgba(232,236,244,0.08) 40%, transparent 70%);
+    animation: breathe 3.2s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.75; transform: scale(1); }
+    50%      { opacity: 1;    transform: scale(1.06); }
+  }
+  .glyph { position: relative; width: 120px; height: 120px; }
+
+  .wordmark {
+    font-size: 44px;
+    font-weight: 300;
+    letter-spacing: 0.5px;
+    color: var(--wordmark);
+    text-shadow: 0 0 24px rgba(232,236,244,0.25);
+  }
+
+  /* Boot status line (filled by app-shell.js) */
+  .status {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 28px);
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    color: #6a7080;
+  }
+  .status .ring {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border: 1.5px solid #3a3f4c;
+    border-top-color: #9aa2b2;
+    border-radius: 50%;
+    vertical-align: -1px;
+    margin-right: 8px;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div id="splash">
+    <div class="glyph-wrap">
+      <div class="glyph-glow"></div>
+      <!-- Phosphor P-orb glyph -->
+      <svg class="glyph" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="62" cy="56" r="30" stroke="#f2f4f8" stroke-width="9"/>
+        <circle cx="62" cy="56" r="10.5" fill="#f2f4f8"/>
+        <path d="M 44 82 Q 40 96 34 104" stroke="#f2f4f8" stroke-width="9" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="wordmark">Phosphor</div>
+  </div>
+  <div class="status" id="boot-status"><span class="ring"></span>CONNECTING</div>
+
+  <script>
+    // Splash API: app-shell.html drives these.
+    window.splash = {
+      status(text)  { document.getElementById('boot-status').innerHTML =
+                        '<span class="ring"></span>' + String(text).replace(/[<>&]/g,''); },
+      hide(delayMs) {
+        setTimeout(() => document.getElementById('splash').classList.add('hide'),
+                   delayMs || 0);
+      },
+      show() { document.getElementById('splash').classList.remove('hide'); }
+    };
+  </script>
+</body>
+</html>
