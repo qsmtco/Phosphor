@@ -31,9 +31,10 @@ targets:
         excludes:
           - "Info.plist"
           - "Phosphor.entitlements"
-      # Web shell (app-shell.html, splash.html) bundled as resources
-      - path: ../ios-app
-        type: folder
+      # Web shell files bundled at bundle root (individual resources)
+      - path: ../ios-app/app-shell.html
+        buildPhase: resources
+      - path: ../ios-app/splash.html
         buildPhase: resources
     info:
       path: Phosphor/Info.plist

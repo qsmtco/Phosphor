@@ -113,9 +113,23 @@ struct ShellView: UIViewRepresentable {
         bridge.attach(webView: webView)
         context.coordinator.webView = webView
 
-        // Load the BUNDLED shell (no network needed for the UI itself)
-        if let shellURL = Bundle.main.url(forResource: "app-shell", withExtension: "html") {
+        // Load the BUNDLED shell (no network needed for the UI itself).
+        // xcodegen "type: folder" may nest it under ios-app/ - try candidates
+        // and log every miss so a packaging change is visible in Console.
+        if let shellURL = Self.locateShell() {
+            print("[Phosphor] shell found at:", shellURL.path)
             webView.loadFileURL(shellURL, allowingReadAccessTo: shellURL.deletingLastPathComponent())
+        } else {
+            print("[Phosphor] FATAL: app-shell.html not found in bundle. Bundle contents:")
+            if let resourcePath = Bundle.main.resourcePath,
+               let contents = try? FileManager.default.contentsOfDirectory(atPath: resourcePath) {
+                for item in contents { print("  -", item) }
+            }
+            webView.loadHTMLString("""
+                <html><body style="background:#1c1d22;color:#ff5e7c;font-family:monospace;
+                display:grid;place-items:center;height:100vh;margin:0">
+                <div style="text-align:center">PACKAGING ERROR<br>app-shell.html missing</div>
+                </body></html>""", baseURL: nil)
         }
 
         return webView
@@ -125,10 +139,32 @@ struct ShellView: UIViewRepresentable {
         if context.coordinator.lastReloadToken != reloadToken {
             context.coordinator.lastReloadToken = reloadToken
             context.coordinator.bridge.tearDown()
-            if let shellURL = Bundle.main.url(forResource: "app-shell", withExtension: "html") {
+            if let shellURL = Self.locateShell() {
                 uiView.loadFileURL(shellURL, allowingReadAccessTo: shellURL.deletingLastPathComponent())
             }
         }
+    }
+
+    /// Find app-shell.html wherever the packaging put it.
+    nonisolated static func locateShell() -> URL? {
+        let bundle = Bundle.main
+        // 1. At bundle root (plain resource copy)
+        if let u = bundle.url(forResource: "app-shell", withExtension: "html") {
+            return u
+        }
+        // 2. Inside a copied folder reference (ios-app/)
+        if let u = bundle.url(forResource: "app-shell", withExtension: "html",
+                              subdirectory: "ios-app") {
+            return u
+        }
+        // 3. Brute-force scan the bundle for it (folder refs can nest deeper)
+        if let resourcePath = bundle.resourcePath,
+           let files = FileManager.default.enumerator(atPath: resourcePath) {
+            for case let f as String in files where f.hasSuffix("app-shell.html") {
+                return URL(fileURLWithPath: resourcePath).appendingPathComponent(f)
+            }
+        }
+        return nil
     }
 
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
