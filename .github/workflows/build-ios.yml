@@ -41,7 +41,7 @@ jobs:
               exit 0
             fi
           done
-          echo "::error::No iPhone 14/15/16 simulator available. See 'List available iOS Simulator devices' step output."
+          echo "::error::No iPhone 14-17 simulator available. See 'List available iOS Simulator devices' step output."
           exit 1
 
       - name: Install xcodegen

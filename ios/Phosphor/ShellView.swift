@@ -196,7 +196,9 @@ struct ShellView: UIViewRepresentable {
             didReceive message: WKScriptMessage
         ) {
             if message.name == "phosphorMic" {
-                VoiceController.shared.toggle()
+                Task { @MainActor in
+                    VoiceController.shared.toggle()
+                }
                 return
             }
             guard message.name == "phosphorConfig" else { return }
