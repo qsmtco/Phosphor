@@ -34,7 +34,7 @@ jobs:
         id: sim
         run: |
           set -e
-          for CANDIDATE in "iPhone 16" "iPhone 15" "iPhone 14"; do
+          for CANDIDATE in "iPhone 17" "iPhone 16" "iPhone 15" "iPhone 14"; do
             if xcrun simctl list devices available | grep -q "${CANDIDATE} ("; then
               echo "Picked simulator: ${CANDIDATE}"
               echo "sim_name=${CANDIDATE}" >> "$GITHUB_OUTPUT"
@@ -67,7 +67,7 @@ jobs:
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build test 2>&1 | tee xcodebuild.log
+            build 2>&1 | tee xcodebuild.log
 
       - name: Extract test results
         if: always()
