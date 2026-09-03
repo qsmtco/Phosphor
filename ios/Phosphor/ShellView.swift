@@ -109,6 +109,7 @@ struct ShellView: UIViewRepresentable {
         let bridge = context.coordinator.bridge
         configuration.userContentController.add(bridge, name: "phosphorNFC")
         configuration.userContentController.add(context.coordinator, name: "phosphorConfig")
+        configuration.userContentController.add(context.coordinator, name: "phosphorMic")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsLinkPreview = false
@@ -178,6 +179,7 @@ struct ShellView: UIViewRepresentable {
         coordinator.bridge.tearDown()
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorNFC")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorConfig")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorMic")
     }
 
     // MARK: - Coordinator
@@ -193,6 +195,10 @@ struct ShellView: UIViewRepresentable {
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage
         ) {
+            if message.name == "phosphorMic" {
+                VoiceController.shared.toggle()
+                return
+            }
             guard message.name == "phosphorConfig" else { return }
             Task { @MainActor in
                 guard let dict = message.body as? [String: Any] else { return }

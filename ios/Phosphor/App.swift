@@ -100,68 +100,6 @@ struct SetupView: View {
     }
 }
 
-// MARK: - Mic Button (push-to-talk overlay)
-
-struct MicButton: View {
-    @StateObject private var voice = VoiceController.shared
-    let onTranscript: (String) -> Void
-
-    var body: some View {
-        Button(action: { voice.toggle() }) {
-            ZStack {
-                Circle()
-                    .fill(voice.state == .recording
-                          ? Color(red: 1.0, green: 0.37, blue: 0.49)
-                          : Color(red: 0.29, green: 0.85, blue: 0.47))
-                    .frame(width: 37, height: 37)
-                    .shadow(color: (voice.state == .recording
-                        ? Color(red: 1.0, green: 0.37, blue: 0.49)
-                        : Color(red: 0.29, green: 0.85, blue: 0.47)).opacity(0.5),
-                        radius: voice.state == .recording ? 9 : 5)
-                Image(systemName: voice.state == .recording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color(red: 0.06, green: 0.14, blue: 0.10))
-            }
-        }
-        .onAppear {
-            // Wire the controller's transcript callback to this button's handler.
-            // (BUGFIX: previously nothing assigned voice.onTranscript, so the
-            // final transcript was silently dropped on stop.)
-            voice.onTranscript = { text in
-                onTranscript(text)
-            }
-        }
-        .onChange(of: voice.partialText) { newValue in
-            // live partial preview is shown by the page via voicePreview
-            webViewEval("window.phosphor?.voicePreview?.(\(jsonString(newValue)))")
-        }
-        .onChange(of: voice.state) { newState in
-            if newState == .idle {
-                // stop() already delivered transcript via onTranscript
-            } else if case .error(let msg) = newState {
-                webViewEval("window.phosphor?.voiceError?.(\(jsonString(msg)))")
-            } else if newState == .denied {
-                webViewEval("window.phosphor?.voiceError?.('Microphone/Speech permission denied - enable in Settings')")
-            } else if newState == .unavailable {
-                webViewEval("window.phosphor?.voiceError?.('Speech recognition unavailable')")
-            }
-        }
-    }
-
-    private func jsonString(_ s: String) -> String {
-        let data = try? JSONSerialization.data(withJSONObject: [s])
-        return String(data: data ?? Data("[]".utf8), encoding: .utf8).map { String($0.dropFirst().dropLast()) } ?? "''"
-    }
-
-    private func webViewEval(_ js: String) {
-        // Routed through the shared webView reference
-        NotificationCenter.default.post(
-            name: Notification.Name("phosphorEvalJS"),
-            object: nil,
-            userInfo: ["js": js])
-    }
-}
-
 // MARK: - App Entry Point
 
 @main
@@ -190,18 +128,6 @@ struct PhosphorApp: App {
                 if configured && !connectivity.isOnline {
                     OfflineView(onRetry: { reloadToken += 1 })
                 }
-                if configured {
-                    MicButton { text in
-                        // Final transcript -> shell sends it as a message
-                        let js = "window.phosphor?.sendFromVoice?.(\(jsonEncode(text))); void 0"
-                        NotificationCenter.default.post(
-                            name: Notification.Name("phosphorEvalJS"),
-                            object: nil,
-                            userInfo: ["js": js])
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.init(top: 0, leading: 0, bottom: 96, trailing: 18))
-                }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("phosphorEvalJS"))) { note in
                 if let js = note.userInfo?["js"] as? String {
@@ -212,11 +138,40 @@ struct PhosphorApp: App {
                         userInfo: ["js": js])
                 }
             }
+            .onReceive(voice.$partialText) { partial in
+                guard let js = Self.jsCall("window.phosphor?.voicePreview", [partial]) else { return }
+                NotificationCenter.default.post(
+                    name: Notification.Name("phosphorEvalJSForShell"),
+                    object: nil, userInfo: ["js": js])
+            }
+            .onReceive(voice.$state) { st in
+                // Push state + errors into the page; on idle, the final
+                // transcript is delivered via the onTranscript callback below.
+                if case .error(let m) = st {
+                    if let js = Self.jsCall("window.phosphor?.voiceError", [m]) {
+                        NotificationCenter.default.post(
+                            name: Notification.Name("phosphorEvalJSForShell"),
+                            object: nil, userInfo: ["js": js])
+                    }
+                }
+            }
+            .onAppear {
+                // Deliver final transcripts into the page
+                VoiceController.shared.onTranscript = { text in
+                    if let js = Self.jsCall("window.phosphor?.sendFromVoice", [text]) {
+                        NotificationCenter.default.post(
+                            name: Notification.Name("phosphorEvalJSForShell"),
+                            object: nil, userInfo: ["js": js])
+                    }
+                }
+            }
         }
     }
 
-    private func jsonEncode(_ s: String) -> String {
-        let data = try? JSONSerialization.data(withJSONObject: [s])
-        return String(data: data ?? Data("''".utf8), encoding: .utf8).map { String($0.dropFirst().dropLast()) } ?? "''"
+        nonisolated static func jsCall(_ tmpl: String, _ args: [String]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: args),
+              let list = String(data: data, encoding: .utf8) else { return nil }
+        return "\(tmpl)(\(list)); void 0"
     }
+
 }
