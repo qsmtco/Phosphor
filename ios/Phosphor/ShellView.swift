@@ -125,11 +125,13 @@ struct ShellView: UIViewRepresentable {
                let contents = try? FileManager.default.contentsOfDirectory(atPath: resourcePath) {
                 for item in contents { print("  -", item) }
             }
-            webView.loadHTMLString("""
+            let errHtml = """
                 <html><body style="background:#1c1d22;color:#ff5e7c;font-family:monospace;
                 display:grid;place-items:center;height:100vh;margin:0">
                 <div style="text-align:center">PACKAGING ERROR<br>app-shell.html missing</div>
-                </body></html>""", baseURL: nil)
+                </body></html>
+                """
+            webView.loadHTMLString(errHtml, baseURL: nil)
         }
 
         return webView
