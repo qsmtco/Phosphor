@@ -116,6 +116,7 @@ struct PhosphorApp: App {
     @State private var reloadToken = 0
     @State private var configured = ServerConfig.isConfigured
     @State private var approval: ApprovalRequest?
+    @State private var approvalQueue: [ApprovalRequest] = []
 
     var body: some Scene {
         WindowGroup {
@@ -138,14 +139,48 @@ struct PhosphorApp: App {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("phosphorApprovalRequest"))) { note in
-                if let id = note.userInfo?["approval_id"] as? String,
-                   let cmd = note.userInfo?["command"] as? String {
-                    approval = ApprovalRequest(id: id, command: cmd)
+                guard let id = note.userInfo?["approval_id"] as? String else { return }
+                if approval != nil {
+                    // L1 (P5 audit): queue instead of dropping
+                    approvalQueue.append(ApprovalRequest(id: id, command: ""))
                 }
+                // P5-H1 (audit): NEVER trust the page's command text. Fetch
+                // the server's stored command, then show the card with it.
+                let server = ServerConfig.server
+                guard let url = URL(string: server + "/approve") else { return }
+                var req = URLRequest(url: url)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.timeoutInterval = 15
+                req.httpBody = try? JSONSerialization.data(withJSONObject: [
+                    "key": ServerConfig.token,
+                    "approval_id": id,
+                    "action": "preview"])
+                URLSession.shared.dataTask(with: req) { data, _, _ in
+                    guard let d = data,
+                          let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                          obj["ok"] as? Bool == true,
+                          let cmd = obj["command"] as? String else {
+                        // unknown/expired: inform the page, no card
+                        let js = "window.phosphor?.approvalResult?.(false, 'approval expired or unknown', ''); void 0"
+                        NotificationCenter.default.post(
+                            name: Notification.Name("phosphorEvalJSForShell"),
+                            object: nil, userInfo: ["js": js])
+                        return
+                    }
+                    Task { @MainActor in
+                        let r = ApprovalRequest(id: id, command: cmd)
+                        if approval == nil { approval = r }
+                        else { approvalQueue.append(r) }
+                    }
+                }.resume()
             }
             .alert("Destructive command", isPresented: Binding(
                 get: { approval != nil },
-                set: { if !$0 { approval = nil } }
+                set: { if !$0 {
+                    approval = nil
+                    if !approvalQueue.isEmpty { approval = approvalQueue.removeFirst() }
+                } }
             )) {
                 Button("Approve", role: .destructive) {
                     if let a = approval { handleApproval(a, approved: true) }
@@ -226,7 +261,7 @@ struct PhosphorApp: App {
         let body: [String: Any] = ["key": ServerConfig.token,
                                    "approval_id": a.id,
                                    "deny": !approved,
-                                   "session": "ios-approval"]
+                                   "session": "ios-card"]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req) { data, resp, err in
             var js: String

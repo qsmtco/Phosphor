@@ -1,0 +1,88 @@
+{
+  "audit": "P5 — Native SwiftUI approval card (PHOS-SPEC-001 §8, §12.2)",
+  "date": "2026-09-04",
+  "auditor": "independent subagent (fresh eyes, spec + code only)",
+  "scope": [
+    "phosphor/ios/Phosphor/App.swift (ApprovalRequest, observer, .alert, handleApproval)",
+    "phosphor/ios/Phosphor/ShellView.swift (phosphorApproval handler, registration/teardown)",
+    "phosphor/ios-app/app-shell.html (meta.pending postMessage, approvalResult)",
+    "dragoncakes/server.py (/approve interaction with card: single-use, TTL, deny)",
+    "dragoncakes/agent_core.py (request_approval/take_approval/approve_pending/pending_approval/_purge_expired_locked, agent_turn meta.pending)"
+  ],
+  "excluded": "R-QUAR (P1), R-GATE classifier+secret gates (P2), token hygiene + script enablement (P3/P4) — not re-audited",
+  "findings": [
+    {
+      "id": "P5-H1",
+      "severity": "HIGH",
+      "title": "Native card displays page-supplied command text never verified against the server registry — the card is spoofable, defeating the §12.2 rationale",
+      "files": ["App.swift (handleApproval, ApprovalRequest)", "ShellView.swift (phosphorApproval handler)", "app-shell.html (postMessage to phosphorApproval)", "server.py (/approve)"],
+      "detail": "The command string shown in the SwiftUI alert comes verbatim from the page's postMessage({approval_id, command}). ShellView and App.swift perform no server-side verification that the displayed command matches the command stored in _APPROVALS for that approval_id, and /approve does not echo the true command for confirmation. Malicious generated-screen JS (threat A1) can: (1) call /message through the token-attaching phosphorApi proxy with a prompt that induces a destructive run_command, receiving a REAL approval_id in meta.pending; (2) postMessage to phosphorApproval pairing that real approval_id with an entirely benign fake command string. The user taps Approve believing the benign text; /approve executes the real destructive command from the registry. Additionally, page JS can simply overwrite window.phosphor.approvalResult to suppress or falsify the outcome rendering. The Captain's §12.2 decision rationale — native card is 'immune to prompt-injected page content spoofing the approval UI' — is only true of the chrome (SwiftUI alert), not of its content. Fix direction: have the native side fetch/confirm the command from the server by approval_id before display, or have /approve return the registry command and fail closed if it differs from what the card displayed.",
+      "spec": "§8 step 2, §12.2 (MUST-level intent of the Captain decision)"
+    },
+    {
+      "id": "P5-M1",
+      "severity": "MEDIUM",
+      "title": "Approval outcome never reaches the agent: R-GATE-7 / §8 step 6 unimplemented; approved output also absent from agent history",
+      "files": ["server.py (/approve deny path)", "App.swift (handleApproval)", "agent_core.py (agent_turn)"],
+      "detail": "When the user taps Deny, /approve marks the entry used and returns {ok, denied:true} to the app, which renders a 'Denied' line in the page. Nothing is appended to the agent's session history and no 'user declined' tool result is ever delivered — R-GATE-7 (MUST) and §8 step 6 are not implemented. Symmetrically, on Approve the command output goes only to the page via approvalResult; the agent's conversation never contains the exit code/output, so the agent cannot reason about or report on the result it requested in subsequent turns. The in-turn '[PENDING APPROVAL …] Tell the user to approve or deny' tool result closes the turn gracefully, but the agent remains permanently unaware of the decision.",
+      "spec": "R-GATE-7 (MUST), §8 steps 5–6"
+    },
+    {
+      "id": "P5-M2",
+      "severity": "MEDIUM",
+      "title": "Per-process approval registries make cross-front-end approval impossible for Telegram-origin pendings",
+      "files": ["agent_core.py (_APPROVALS, approve_pending docstring)", "server.py (/approve)"],
+      "detail": "_APPROVALS is an in-module dict; telegram_agent.py and server.py are separate processes with separate registries. When a pending is raised during a Telegram turn, server.py /approve looks it up in the server process's _APPROVALS, finds nothing, and returns 404 'unknown approval_id'. The approve_pending docstring acknowledges the split but no cross-process path exists (no shared store, no IPC, no forward to the Telegram process). §8 steps 3–4 present the Telegram card and the POST /approve path as interchangeable ('any front-end'); in practice a pending raised in one front-end's process can only be decided in that same process. The iOS approval card silently fails for every Telegram-origin destructive command.",
+      "spec": "§8 steps 3–4, R-GATE-6"
+    },
+    {
+      "id": "P5-M3",
+      "severity": "MEDIUM",
+      "title": "Only the last pending approval per turn is surfaced; earlier destructive commands get no card and silently expire",
+      "files": ["agent_core.py (agent_turn pending_id)", "app-shell.html (meta.pending)"],
+      "detail": "agent_turn tracks a single pending_id scalar, overwritten on each new '[PENDING APPROVAL id=…]' match. A turn in which the model attempts two destructive commands (e.g. two gated run_command calls, or a W1 write plus a D-class command) leaves only the final approval_id in meta.pending. Earlier pendings sit in _APPROVALS until TTL purge (≤10 min), never displayed to the user anywhere, while the agent has already told the user to approve them. The user has no way to see or decide those commands at all — the only decision surfaces are the card and Telegram, and neither shows them.",
+      "spec": "R-GATE-3 (MUST: pending request MUST be presented), §8"
+    },
+    {
+      "id": "P5-L1",
+      "severity": "LOW",
+      "title": "A second approval arriving while the card is displayed silently replaces the first",
+      "files": ["App.swift (.onReceive phosphorApprovalRequest)"],
+      "detail": "Setting approval = ApprovalRequest(...) while the alert is visible drops the previous ApprovalRequest without any user decision; its approval_id is never approved or denied and simply expires server-side. With P5-M3 this is the expected collision case for multi-pending turns. A queue (or presenting the next alert after dismissal) would preserve every decision point.",
+      "spec": "§8, R-GATE-3"
+    },
+    {
+      "id": "P5-L2",
+      "severity": "LOW",
+      "title": "Multiple silent no-op paths leave the user with no indication a decision is expected",
+      "files": ["App.swift (handleApproval guard-return)", "ShellView.swift (malformed postMessage guard)", "agent_core.py (pending_approval can return None)"],
+      "detail": "(a) If URL(string: server + \"/approve\") fails, handleApproval returns silently — no approvalResult, no error card; the pending dies by TTL. (b) A malformed phosphorApproval postMessage (missing approval_id/command) is silently dropped in ShellView. (c) If the pending expires between request_approval and meta surfacing, pending_approval returns None, meta.pending is omitted, and no card ever appears even though the agent told the user to approve. Each path ends in an approval that was requested (and announced by the agent) but is invisible and undecidable.",
+      "spec": "§8 (card presentation), R-GATE-3"
+    },
+    {
+      "id": "P5-L3",
+      "severity": "LOW",
+      "title": "Browser/desktop harness has no approval surface at all — pendings raised there are invisible",
+      "files": ["app-shell.html (postMessage gated on messageHandlers.phosphorApproval)"],
+      "detail": "The meta.pending → postMessage path is gated on window.webkit?.messageHandlers?.phosphorApproval, absent in the browser harness. A destructive command pending in a desktop-harness session is never shown; the agent's 'tell the user to approve or deny' instruction is the only trace. Accepted as a dev-tool per R-SEC-2's precedent, but worth a visible 'pending, decide on phone' fallback.",
+      "spec": "§8, R-SEC-2 note"
+    },
+    {
+      "id": "P5-L4",
+      "severity": "LOW",
+      "title": "Approver identity hardcoded to 'ios-approval' — H2 audit trail cannot attribute decisions",
+      "files": ["App.swift (handleApproval body)"],
+      "detail": "Every iOS card decision records approved_by='ios-approval' regardless of which device/session decided; the page's real CONFIG.session (per-device random) is available and could be sent instead. server.py does record the approver string, but the constant value makes the trail non-discriminating. P2 accepted session-permissive /approve per §8.4, so this is an observability gap, not an authz gap.",
+      "spec": "§8 step 4, R-GATE-6 (binding aspect noted, authz not re-audited)"
+    }
+  ],
+  "verified_ok": [
+    "Single-use consume is atomic under _APPROVALS_LOCK in /approve; used-flag set only after used/TTL checks (no deny-bypass of TTL, no double-exec race)",
+    "Deny path consumes the approval (deny cannot be later flipped to approve); expired entries return 410",
+    "App.swift output escaping into the JS template literal is correct (backslash, backtick, $ in safe order); page renders output via esc()",
+    "Token attached natively in handleApproval (R-SEC-2 preserved); page cannot reach /approve — phosphorApi proxy allowlists only /message and /reset",
+    "Handler registration (makeUIView) and teardown (dismantleUIView) cover phosphorApproval; remount via .id(reloadToken) triggers dismantle",
+    "Approve request timeout (130 s) exceeds server-side subprocess timeout (120 s)",
+    "TTL 300 s matches R-GATE-3; purge keeps expired-unused entries only for later cleanup, and all read paths re-check TTL"
+  ]
+}

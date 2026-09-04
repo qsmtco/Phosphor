@@ -264,9 +264,13 @@ async function send(text) {
     // PHOS-SPEC-001 §8: native SwiftUI approval card (Captain decision)
     if (data.meta && data.meta.pending && window.webkit?.messageHandlers?.phosphorApproval) {
       const h = window.webkit.messageHandlers.phosphorApproval;
-      h.postMessage({ approval_id: data.meta.pending.approval_id,
-                      command: data.meta.pending.command });
-      dbg('approval card requested: ' + data.meta.pending.approval_id.slice(0,8));
+      const list = data.meta.pending_all || [data.meta.pending];
+      list.forEach(p => {
+        // command text is ignored by native (P5-H1 fix: server preview only);
+        // sent for debugging/logging only.
+        h.postMessage({ approval_id: p.approval_id, command: p.command });
+        dbg('approval card requested: ' + p.approval_id.slice(0,8));
+      });
     }
   } catch (e) {
     showThinking(false);

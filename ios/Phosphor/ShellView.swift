@@ -212,8 +212,13 @@ struct ShellView: UIViewRepresentable {
                 // approval card (Captain decision 2026-09-03: native card).
                 Task { @MainActor in
                     guard let dict = message.body as? [String: Any],
-                          let aid = dict["approval_id"] as? String,
-                          let cmd = dict["command"] as? String else { return }
+                          let aid = dict["approval_id"] as? String
+                    else {
+                        // L2 (P5 audit): malformed request must not vanish
+                        webView?.evaluateJavaScript("window.phosphor?.approvalResult?.(false, 'malformed approval request', ''); void 0")
+                        return
+                    }
+                    let cmd = (dict["command"] as? String) ?? "(server preview)"
                     NotificationCenter.default.post(
                         name: Notification.Name("phosphorApprovalRequest"),
                         object: nil,
