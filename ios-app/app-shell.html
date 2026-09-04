@@ -176,6 +176,18 @@ function setScreen(html, append = false) {
   } else {
     s.innerHTML = html;
   }
+  // R-UI: innerHTML does NOT execute <script> tags. Re-create them so
+  // generated screens run their JS (onclick attrs work natively).
+  s.querySelectorAll('script').forEach(oldScript => {
+    const s2 = document.createElement('script');
+    if (oldScript.src) {
+      s2.src = oldScript.src;               // external script
+    } else {
+      s2.textContent = oldScript.textContent; // inline script
+    }
+    document.currentScript ? document.currentScript.replaceWith(s2)
+                           : oldScript.replaceWith(s2);
+  });
   s.scrollTop = s.scrollHeight;
 }
 

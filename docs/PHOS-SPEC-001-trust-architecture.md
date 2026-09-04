@@ -170,8 +170,10 @@ hardening is rejected. (Product thesis, PHOSPHOR_SPEC.md §"The Idea".)
   page-global after this spec. Server requests initiated by page JS are
   proxied through the native bridge (R-BRIDGE-2) which holds the token
   natively.
-  *(Migration note: current build injects `PH_TOKEN` — removal is part of
-  this spec's implementation.)*
+  *(Implementation 2026-09-04: `PH_TOKEN` injection removed; `phosphorApi`
+  native proxy attached in ShellView. The browser/desktop harness at
+  phosphor.smtco.co keeps the legacy direct-fetch path with localStorage —
+  accepted as a development tool, not a deployment surface.)*
 - **R-SEC-3 (MUST):** `.env` and any credentials on the server MUST NOT be
   readable via `read_file` from agent tools: the path set
   `{server .env, .env.*, *.pem, *.p12, *.p8, *.key, id_rsa*, .git-credentials}`
@@ -307,8 +309,8 @@ Each requirement verified as follows (evidence recorded in this repo):
 |---|---|---|
 | P1 | Quarantine envelopes (R-QUAR-1/2) in `run_tool` for web_search + http_request; standing system-prompt rule | 1 h |
 | P2 | Command classifier + JSON pattern file + approval registry + `/approve` endpoint + Telegram approval card + native SwiftUI approval card in iOS app (R-GATE incl. R-GATE-8) | 4 h |
-| P3 | Secret hygiene: token out of page scope, native `phosphorApi` proxy, `.env` read-gating (R-SEC) | 2 h |
-| P4 | Remove UI script-stripping (R-UI-1/3); system-prompt JS-enable wording | 0.5 h |
+| P3 | Secret hygiene: token out of page scope, native `phosphorApi` proxy, `.env` read-gating (R-SEC) | **DONE 2026-09-04** |
+| P4 | Remove UI script-stripping (R-UI-1/3); system-prompt JS-enable wording | **DONE 2026-09-04** |
 | P5 | Verification pass (§9) + TestFlight build | 1 h |
 
 ## 12. Resolved Questions (Captain-approved 2026-09-03)
