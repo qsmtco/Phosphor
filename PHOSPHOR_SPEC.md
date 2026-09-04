@@ -209,7 +209,7 @@ This is the whole point. Here's the loop:
 | Piece | Recommendation | Cost |
 |---|---|---|
 | **STT (speech-to-text)** | OpenAI Whisper API ($0.006/min) — **cloud-only today**; Whisper.cpp on Tensor NPU is planned, not wired | $0–$5/mo |
-| **LLM (the brain)** | **OpenRouter** — single API key, 200+ models. Default `anthropic/claude-sonnet-4.5`, fall back to `meta/llama-3.3-70b-instruct` | $5–$30/mo |
+| **LLM (the brain)** | **OpenRouter** — single API key, 200+ models. Current default `google/gemini-2.5-flash` (benchmarked on the real Phosphor workload for speed and instruction discipline; lighter and heavier alternates tested — see docs/). Fall back to a larger model when the task needs it | $5–$30/mo |
 | **TTS (speech back)** | OpenAI TTS-1-HD or ElevenLabs — **cloud-only today**; Piper TTS local is planned, not wired | $0–$22/mo |
 | **Image gen** | `stability/sdxl` via OpenRouter when UI asks | ~$0.01/image |
 | **System prompt** | The design language. "You are the OS of Phosphor. Respond ONLY with valid HTML5 + inline CSS + inline JS. Viewport is 1080×2400px, touch-first, no keyboard. Use large tap targets (min 80px). Use `window.phosphor.*` JS API for actions. Never use external CDN — everything inline. Never use emoji unless requested. Prefer dark backgrounds with high-contrast text." | $0 |
@@ -238,13 +238,13 @@ Drop ElevenLabs and use OpenAI TTS-1 → **$10–$30/mo total**.
 
 ## Build Order (concrete)
 
-1. **Buy the Pixel 7a refurb.** Unlock, factory reset, flash GrapheneOS via web installer. (1 day) — see full walkthrough below.
+1. **Buy the Pixel 8a refurb (model GKV4X, factory unlocked).** Unlock, factory reset, flash GrapheneOS via web installer. (1 day) — see full walkthrough below. (Earlier drafts said 7a; the 8a is the target — G3 NPU, and the walkthrough below applies identically.)
 2. **Install Termux + F-Droid + Obtainium + Aurora Store.** Install Chromium. Disable everything else. (1 hour)
 3. **Build the `shell.html`:** blank dark screen, mic button, mic-permission flow, transcript display, OpenRouter call, HTML injection. Test in browser first on desktop. (1 weekend)
 4. **Voice loop end-to-end:** mic → Whisper → OpenRouter → render returned HTML. (1 weekend)
 5. **Build the bridge:** Rust binary, ModemManager for SMS/calls, bluez for BT, connman for WiFi. Expose via WebSocket. (2 weeks)
 6. **Kiosk it:** Cage + Chromium --kiosk, autostart on boot, lock task mode, disable nav gestures. (1 day)
-7. **Add the local LLM fallback:** llama.cpp + 8B model on Tensor G2 NPU. (1 weekend)
+7. **Add the local LLM fallback:** llama.cpp + 8B model on Tensor G3 NPU. (1 weekend)
 8. **Write the system prompt** — ongoing art project. Refine weekly. The personality of Phosphor lives here.
 
 ---
@@ -350,6 +350,23 @@ A **generative UI handheld**. A phone where the AI is the OS, the browser is the
 The name is yours.
 
 ---
+
+## What the iOS Proof-of-Concept Proved (2026-09)
+
+The iOS app in `ios/` + `ios-app/` (TestFlight, `com.qsmtco.phosphor.app`) was built as a proof of concept for the parts of this spec that don't need Android: the voice loop, generative screens, a real CI/CD pipeline, and — most importantly — the trust architecture. It is done and frozen as a reference. The Android build replaces the container (WKWebView → Vanadium kiosk, iOS handlers → Rust bridge) and inherits everything else.
+
+Lessons that MUST carry into the Android shell:
+
+1. **`innerHTML` does not execute `<script>` tags.** The shell must re-create script nodes after injection. Wrap each resurrected script in an IIFE and hoist top-level `function` declarations to `window` so inline `onclick` handlers still resolve — otherwise screens collide with each other across turns (P4 audit).
+2. **Block external `<script src>`.** Subresource loads bypass navigation allowlists in every WebView. The prompt already mandates inline JS; the loader must enforce it (P4 audit H1).
+3. **Secrets never enter page scope.** The auth token lives in native storage; page JS talks to the server through a native proxy that attaches it. Purge stale tokens from page storage at boot. Verified by audit (P3).
+4. **The approval card must be native AND server-verified.** Page-supplied command text cannot be trusted — fetch the stored command from the server registry before showing the card (P5 audit H1). Denials must be fed back into the agent's conversation (R-GATE-7) or the model never learns.
+5. **Quarantine ALL untrusted content.** Search results and fetched pages enter the model's context in labeled DATA-only envelopes; instructions inside are ignored and reported. Scan every tool result for injection markers (P1/P3 audits).
+6. **Destructive-command gating is deterministic, not model judgment.** A fail-closed pattern engine (data file, not hardcoded) classifies commands; safe ones run free for speed, destructive ones hold for a human tap. This is the "Danger-gate" from the README, production-grade (P2 audit).
+7. **Secret-file access and out-of-scope writes are gated.** `.env`, `.ssh`, keys: blocked. Writes outside the project tree: approval. Conversation histories are redacted before disk (R-SEC-3/4).
+8. **Independent audits are the process.** Four minimal-context subagent audits found ~35 real findings across P1–P5, including two would-be-brick bugs and a spoofable approval card. The Android shell gets the same treatment before it's trusted.
+
+The full trust spec (requirements, threat model, verification): `docs/PHOS-SPEC-001-trust-architecture.md`. Audit reports: `docs/P1-AUDIT.md` … `docs/P5-AUDIT.md`. Verification: `docs/VERIFICATION.md`.
 
 ## Project Files
 

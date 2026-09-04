@@ -1,5 +1,10 @@
 # PHOS-SPEC-001 Verification Report (§9)
 **Date:** 2026-09-04 · All checks executed against live server + real pipeline
+**Scope note:** This verification covers the iOS proof-of-concept and the shared
+agent core. The trust requirements verified here are front-end-agnostic
+(PHOS-SPEC-001 applicability note) and carry to the Android/GrapheneOS build;
+on-device Android checks (bridge, kiosk, NFC) are future work per
+`PHOSPHOR_SPEC.md`.
 
 | Req | Check | Result |
 |---|---|---|
