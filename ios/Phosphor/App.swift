@@ -102,7 +102,6 @@ struct SetupView: View {
 
 // MARK: - App Entry Point
 
-@main
 // MARK: - Approval request (PHOS-SPEC-001 §8, native SwiftUI card)
 
 struct ApprovalRequest: Identifiable {
@@ -110,6 +109,7 @@ struct ApprovalRequest: Identifiable {
     let command: String
 }
 
+@main
 struct PhosphorApp: App {
     @StateObject private var connectivity = ConnectivityMonitor()
     @StateObject private var voice = VoiceController.shared
