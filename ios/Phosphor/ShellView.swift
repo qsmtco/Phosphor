@@ -227,6 +227,7 @@ struct ShellView: UIViewRepresentable {
                     urlReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     urlReq.httpBody = payload
                     urlReq.timeoutInterval = 120
+                    let webViewRef = webView
                     URLSession.shared.dataTask(with: urlReq) { data, resp, err in
                         var json = "{\"ok\":false,\"__error\":\"network error\"}"
                         if let d = data, let s = String(data: d, encoding: .utf8) {
@@ -236,7 +237,7 @@ struct ShellView: UIViewRepresentable {
                         }
                         let js = "window.__phApiResolve && window.__phApiResolve(\(json)); void 0"
                         Task { @MainActor in
-                            webView?.evaluateJavaScript(js)
+                            webViewRef?.evaluateJavaScript(js)
                         }
                     }.resume()
                 }
