@@ -141,7 +141,8 @@ const CONFIG = {
   server: (typeof PH_SERVER !== 'undefined' && PH_SERVER) ||
           localStorage.getItem('ph:server') || 'http://127.0.0.1:8787',
   token:  (typeof PH_TOKEN !== 'undefined' && PH_TOKEN) ||
-          localStorage.getItem('ph:token')  || '',
+          (!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.phosphorApi) &&
+           localStorage.getItem('ph:token')) || '',
   session: 'ios-' + (localStorage.getItem('ph:session') ||
                      Math.random().toString(36).slice(2, 10)),
 };
@@ -214,13 +215,27 @@ async function send(text) {
   setScreen(`<div class="user-bubble"><span>${esc(text)}</span></div>`, true);
   showThinking(true);
   try {
-    const res = await fetch(CONFIG.server + '/message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, key: CONFIG.token, session: CONFIG.session }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    let data;
+    const payload = { message: text, session: CONFIG.session };
+    const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.phosphorApi;
+    if (handler) {
+      // R-SEC-2: native proxy attaches the token; page never holds it
+      data = await new Promise((resolve, reject) => {
+        window.__phApiResolve = resolve;
+        handler.postMessage(JSON.stringify(payload));
+        setTimeout(() => reject(new Error('native API timeout')), 120000);
+      });
+      if (data && data.__error) throw new Error(data.__error);
+    } else {
+      const res = await fetch(CONFIG.server + '/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, key: CONFIG.token }),
+      });
+      data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    }
+    if (!data.ok) throw new Error(data.error || 'server error');
     showThinking(false);
     dbg('reply ok, rounds=' + (data.meta ? data.meta.rounds : '?'));
     if (data.html) setScreen(data.html, true);
@@ -292,8 +307,11 @@ function renderSetup() {
               padding:10px 22px; font-weight:600; cursor:pointer;">Save &amp; connect</button>
     </div>`;
     document.getElementById('su-save').onclick = () => {
+      const isNative = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.phosphorConfig);
       localStorage.setItem('ph:server', document.getElementById('su-server').value.trim());
-      localStorage.setItem('ph:token',  document.getElementById('su-token').value.trim());
+      // R-SEC-2: in the app the token is saved to native storage only
+      // (phosphorConfig -> UserDefaults), never page-readable localStorage.
+      if (!isNative) localStorage.setItem('ph:token', document.getElementById('su-token').value.trim());
       location.reload();
     };
   }

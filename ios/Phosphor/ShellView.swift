@@ -91,12 +91,12 @@ struct ShellView: UIViewRepresentable {
         let server = ServerConfig.server
             .replacingOccurrences(of: "\\", with: "")
             .replacingOccurrences(of: "\n", with: "")
+        // R-SEC-2 (PHOS-SPEC-001): the token must NOT be page-visible.
+        // It is held natively and attached by the phosphorApi proxy handler.
         let token = ServerConfig.token
         let configJS = """
         window.PH_SERVER = "\(server)";
-        window.PH_TOKEN = "\(token)";
-        try { localStorage.setItem("ph:server", window.PH_SERVER);
-              localStorage.setItem("ph:token", window.PH_TOKEN); } catch (e) {}
+        try { localStorage.setItem("ph:server", window.PH_SERVER); } catch (e) {}
         """
         let configScript = WKUserScript(
             source: configJS,
@@ -110,6 +110,7 @@ struct ShellView: UIViewRepresentable {
         configuration.userContentController.add(bridge, name: "phosphorNFC")
         configuration.userContentController.add(context.coordinator, name: "phosphorConfig")
         configuration.userContentController.add(context.coordinator, name: "phosphorMic")
+        configuration.userContentController.add(context.coordinator, name: "phosphorApi")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsLinkPreview = false
@@ -198,6 +199,46 @@ struct ShellView: UIViewRepresentable {
             if message.name == "phosphorMic" {
                 Task { @MainActor in
                     VoiceController.shared.toggle()
+                }
+                return
+            }
+            if message.name == "phosphorApi" {
+                // R-SEC-2: token-attached server proxy. Page posts
+                // {message, session}; we attach key natively and return the
+                // JSON via window.__phApiResolve.
+                Task { @MainActor in
+                    guard let bodyStr = message.body as? String,
+                          let data = bodyStr.data(using: .utf8),
+                          var req = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else {
+                        webView?.evaluateJavaScript("window.__phApiResolve && window.__phApiResolve({ok:false,__error:'bad request body'})")
+                        return
+                    }
+                    req["key"] = ServerConfig.token
+                    let server = ServerConfig.server
+                    guard let url = URL(string: server + "/message"),
+                          let payload = try? JSONSerialization.data(withJSONObject: req)
+                    else {
+                        webView?.evaluateJavaScript("window.__phApiResolve && window.__phApiResolve({ok:false,__error:'bad server url'})")
+                        return
+                    }
+                    var urlReq = URLRequest(url: url)
+                    urlReq.httpMethod = "POST"
+                    urlReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    urlReq.httpBody = payload
+                    urlReq.timeoutInterval = 120
+                    URLSession.shared.dataTask(with: urlReq) { data, resp, err in
+                        var json = "{\"ok\":false,\"__error\":\"network error\"}"
+                        if let d = data, let s = String(data: d, encoding: .utf8) {
+                            json = s
+                        } else if let e = err {
+                            json = "{\"ok\":false,\"__error\":\"" + e.localizedDescription.replacingOccurrences(of: "\"", with: "'") + "\"}"
+                        }
+                        let js = "window.__phApiResolve && window.__phApiResolve(\(json)); void 0"
+                        Task { @MainActor in
+                            webView?.evaluateJavaScript(js)
+                        }
+                    }.resume()
                 }
                 return
             }
