@@ -231,11 +231,14 @@ async function send(text) {
     const payload = { message: text, session: CONFIG.session };
     const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.phosphorApi;
     if (handler) {
-      // R-SEC-2: native proxy attaches the token; page never holds it
+      // R-SEC-2: native proxy attaches the token; page never holds it.
+      // M5 (audit): per-request id so a timed-out request's late reply
+      // can never resolve a newer request.
+      const reqId = 'r' + Date.now() + Math.random().toString(36).slice(2,7);
       data = await new Promise((resolve, reject) => {
-        window.__phApiResolve = resolve;
-        handler.postMessage(JSON.stringify(payload));
-        setTimeout(() => reject(new Error('native API timeout')), 120000);
+        window.__phApiResolve = (id, d) => { if (id === reqId) resolve(d); };
+        handler.postMessage(JSON.stringify({ ...payload, req: reqId }));
+        setTimeout(() => { window.__phApiResolve = null; reject(new Error('native API timeout')); }, 120000);
       });
       if (data && data.__error) throw new Error(data.__error);
     } else {
@@ -294,7 +297,11 @@ window.phosphor.sendFromVoice = function (text) {
 window.phosphor.openURL = function (url) { location.href = url; };
 
 /* ── settings (web form; on iOS a native screen owns config) ── */
-function needsSetup() { return !CONFIG.token; }
+function needsSetup() {
+  // H1 (P3 audit): in the native app the token is invisible by design
+  // (R-SEC-2); presence of the native API handler means we're configured.
+  return !CONFIG.token && !(window.webkit?.messageHandlers?.phosphorApi);
+}
 function renderSetup() {
   const s = $('#screen');
   const native = !!window.webkit?.messageHandlers?.phosphorConfig;
@@ -333,10 +340,20 @@ function renderSetup() {
 async function clearSession() {
   dbg('clear session');
   try {
-    await fetch(CONFIG.server + '/reset', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: CONFIG.token, session: CONFIG.session })
-    });
+    const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.phosphorApi;
+    if (handler) {
+      // M6 (audit): /reset must go through the native token proxy in-app
+      await new Promise((resolve) => {
+        window.__phApiResolve = (id, d) => resolve(d);
+        handler.postMessage(JSON.stringify({ session: CONFIG.session, __reset: true, req: 'reset' }));
+        setTimeout(resolve, 30000);
+      });
+    } else {
+      await fetch(CONFIG.server + '/reset', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: CONFIG.token, session: CONFIG.session })
+      });
+    }
   } catch (e) { dbg('reset failed: ' + e.message); }
   setScreen('<div style="text-align:center; color:var(--fg-dim); margin-top:30vh;">session cleared</div>');
 }

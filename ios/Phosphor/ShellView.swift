@@ -97,6 +97,8 @@ struct ShellView: UIViewRepresentable {
         let configJS = """
         window.PH_SERVER = "\(server)";
         try { localStorage.setItem("ph:server", window.PH_SERVER); } catch (e) {}
+        // M7 (P3 audit): purge pre-spec tokens from page storage entirely
+        try { localStorage.removeItem("ph:token"); } catch (e) {}
         """
         let configScript = WKUserScript(
             source: configJS,
@@ -181,6 +183,7 @@ struct ShellView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorNFC")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorConfig")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorMic")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorApi")
     }
 
     // MARK: - Coordinator
@@ -211,15 +214,18 @@ struct ShellView: UIViewRepresentable {
                           let data = bodyStr.data(using: .utf8),
                           var req = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                     else {
-                        webView?.evaluateJavaScript("window.__phApiResolve && window.__phApiResolve({ok:false,__error:'bad request body'})")
+                        webView?.evaluateJavaScript("window.__phApiResolve && window.__phApiResolve('', {ok:false,__error:'bad request body'})")
                         return
                     }
                     req["key"] = ServerConfig.token
+                    let reqId = (req["req"] as? String) ?? ""
                     let server = ServerConfig.server
-                    guard let url = URL(string: server + "/message"),
+                    // M6 (audit): /reset shares this token-attached proxy
+                    let path = (req["__reset"] as? Bool == true) ? "/reset" : "/message"
+                    guard let url = URL(string: server + path),
                           let payload = try? JSONSerialization.data(withJSONObject: req)
                     else {
-                        webView?.evaluateJavaScript("window.__phApiResolve && window.__phApiResolve({ok:false,__error:'bad server url'})")
+                        webView?.evaluateJavaScript("window.__phApiResolve && window.__phApiResolve('\(reqId)', {ok:false,__error:'bad server url'})")
                         return
                     }
                     var urlReq = URLRequest(url: url)
@@ -229,13 +235,19 @@ struct ShellView: UIViewRepresentable {
                     urlReq.timeoutInterval = 120
                     let webViewRef = webView
                     URLSession.shared.dataTask(with: urlReq) { data, resp, err in
-                        var json = "{\"ok\":false,\"__error\":\"network error\"}"
-                        if let d = data, let s = String(data: d, encoding: .utf8) {
-                            json = s
-                        } else if let e = err {
-                            json = "{\"ok\":false,\"__error\":\"" + e.localizedDescription.replacingOccurrences(of: "\"", with: "'") + "\"}"
+                        // M4 (audit): validate + re-serialize the server body.
+                        // Never interpolate raw text (a tunnel 502 HTML page
+                        // would break the JS and hang the promise).
+                        var outDict: [String: Any] = ["ok": false,
+                            "__error": err?.localizedDescription ?? "invalid server response"]
+                        if let d = data,
+                           let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                            outDict = obj
                         }
-                        let js = "window.__phApiResolve && window.__phApiResolve(\(json)); void 0"
+                        outDict["req"] = reqId  // M5: route to the right request
+                        guard let out = try? JSONSerialization.data(withJSONObject: outDict),
+                              let outStr = String(data: out, encoding: .utf8) else { return }
+                        let js = "window.__phApiResolve && window.__phApiResolve('\(reqId)', \(outStr)); void 0"
                         Task { @MainActor in
                             webViewRef?.evaluateJavaScript(js)
                         }
