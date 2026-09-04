@@ -60,7 +60,7 @@ Leaves **~$235–$285** for a year of OpenRouter + Whisper API credits.
 
 **Battery**: 4492 mAh, Qi wireless, 18W wired. Plenty for a generative-UI device that mostly wakes on voice.
 
-**RAM**: 8 GB LPDDR5X. Sufficient for Cage (150 MB) + Vanadium (1–2 GB for a single kiosk tab) + phosphor-bridge (~30 MB Rust binary) + llama.cpp's 8B model (~4.5 GB RAM-mapped). Headroom ~1 GB.
+**RAM**: 8 GB LPDDR5X. Sufficient for GrapheneOS + the WebView app (system WebView: 1–2 GB for a single tab) + phosphor-bridge (~30 MB Rust binary) + llama.cpp's 8B model (~4.5 GB RAM-mapped). Headroom ~1 GB.
 
 ### Option B — Pixel 8a new ≈ $499
 
@@ -127,9 +127,9 @@ The project is led by Daniel Micay. Originally called CopperheadOS (2014), it wa
 
 #### Why it's the right choice for Phosphor specifically
 
-1. **Boot time is fast.** GrapheneOS boots to a Chromium-on-`shell.html` screen in ~3 seconds. Stock Android with all the Google services takes 15–30 seconds.
-2. **You can kill every background service and lock the launcher.** Disable every app, set Chromium as the default home, lock task mode means the only way to escape the browser is your PIN.
-3. **The Tensor G2 NPU is exposed.** Stock Android with Play Services locks the NPU to Google's ML models. On GrapheneOS you can hit it directly with llama.cpp, Whisper.cpp, etc. — what makes the offline-LLM fallback work.
+1. **Boot time is fast.** GrapheneOS boots to the Phosphor WebView app in ~3 seconds. Stock Android with all the Google services takes 15–30 seconds.
+2. **You can kill every background service and lock the launcher.** Disable every app, set the Phosphor app as the default home, screen pinning means the only way to escape it is your PIN.
+3. **The Tensor G3 NPU is exposed.** Stock Android with Play Services locks the NPU to Google's ML models. On GrapheneOS you can hit it directly with llama.cpp, Whisper.cpp, etc. — what makes the offline-LLM fallback work.
 4. **No Google means no Google account requirement.** Contacts DB lives on-device and feeds the LLM context.
 5. **Verified boot means your "OS" stays the OS.** If you drop the phone, nobody can swap in a malicious OS image. Titan M2 enforces this.
 
@@ -141,35 +141,23 @@ For v1 do **not** go to postmarketOS yet. Pixel hardware (camera, modem, sensors
 
 ### Layer 2 — Window manager / display server
 
-**Cage** (kiosk Wayland compositor, 1 binary, 0 config). Cage takes ~150ms to launch and hands the whole display to one app.
+**SUPERSEDED by the app decision (2026-09-04).** The container is now a thin Android app (Kotlin + WebView), not a kiosk browser. A regular app owns the full screen on Android — no compositor gymnastics needed. Screen pinning (Settings → Security → Advanced → Pin windows) provides the kiosk lockdown; "no status bar, no nav bar" comes free because the app draws edge-to-edge.
 
-Boot order: Cage → Chromium `--kiosk` → your local HTML.
+Historical note: earlier drafts used **Cage** (kiosk Wayland compositor) on postmarketOS, or Chromium `--kiosk` with disabled nav gestures on GrapheneOS. Both work; both require the kiosk hacks (autostart scripts, nav-gesture suppression, home-app tricks) that the app approach eliminates.
 
-Disable everything else: `systemctl disable` on every service that isn't networkd, audio, and the kiosk. No status bar, no nav bar, no notification shade. Nav gestures get disabled via `wm overscan` or `cmd overlay disable`.
+### Layer 3 — The shell (WebView app, not kiosk browser)
 
-Alternative: `labwc` (Wayland compositor, ~2MB RAM) if you ever want window flexibility.
+**DECISION 2026-09-04: thin Android WebView app.** Mirrors the proven iOS architecture (App → WKWebView → app-shell.html → native handlers):
 
-### Layer 3 — The browser-as-shell
+- **Container:** minimal Kotlin app. `MainActivity` + a fullscreen `WebView` + `addJavascriptInterface` bridges (`phosphorApi` for token-attached server calls, `phosphorApproval` for the native approval dialog, later `phosphorBridge` to supervise the Rust process).
+- **Engine:** GrapheneOS's system WebView is Vanadium-powered — the hardened Chromium engine ships with the OS and updates with it. The app is a thin wrapper; it does not bundle its own browser.
+- **Shell page:** the same `app-shell.html` proven on iOS (voice, generative screens, IIFE-wrapped script execution, external-src blocking).
+- **Approval dialog:** native Android `AlertDialog`/Compose dialog with server-verified command content (P5-H1 pattern) — never HTML in the WebView.
+- **Kiosk lockdown:** the app is the default home app + Android screen pinning. No cage, no Chromium flags, no nav-gesture suppression.
 
-**Chromium in kiosk mode** (or `firefox-esr` for lighter footprint, or **Servo** if you want to be punk).
+Web-API hardware access (WebBluetooth/WebUSB/WebHID) that the kiosk-browser plan relied on Chromium flags for is replaced by the Rust bridge's WebSocket API — a cleaner boundary: the JS sandbox talks to `window.phosphor.*` (bridge-backed), not to raw device protocols.
 
-```bash
-chromium \
-  --kiosk \
-  --noerrdialogs \
-  --disable-infobars \
-  --disable-features=Translate,InfobarUI \
-  --no-first-run \
-  --disable-pinch \
-  --overscroll-history-navigation=0 \
-  --touch-events=enabled \
-  --enable-features=WebRTC,WebBluetooth,WebUSB,WebHID \
-  --window-position=0,0 \
-  --window-size=1080,2400 \
-  file:///opt/phosphor/shell.html
-```
-
-The `--enable-features=WebBluetooth,WebUSB,WebHID,WebRTC` flags are critical — they let your JS sandbox **talk to actual hardware**: BLE peripherals, USB devices, microphone, camera, GPS, the cellular modem, NFC.
+(Reference: the kiosk-browser launch command is preserved in git history for the postmarketOS variant, where a compositor + kiosk Chromium remains the right shape.)
 
 ### Layer 4 — Local bridge (the part that makes it a "phone")
 
@@ -217,7 +205,7 @@ This is the whole point. Here's the loop:
 #### Two-mode architecture
 
 - **Online mode** (default): OpenRouter → Claude/GPT/etc. Smart, current, can browse (pipe the LLM a headless browser tool via MCP).
-- **Offline mode** (no signal / battery saving): local LLM via **llama.cpp** + small model like `llama-3.1-8b-instruct-q4` on the Tensor G2 NPU. Worse but functional. Pixel 8a can hit ~15 tok/s locally on G3.
+- **Offline mode** (no signal / battery saving): local LLM via **llama.cpp** + small model like `llama-3.1-8b-instruct-q4` on the Tensor G3 NPU. Worse but functional. Pixel 8a can hit ~15 tok/s locally on G3.
 
 ---
 
@@ -239,11 +227,11 @@ Drop ElevenLabs and use OpenAI TTS-1 → **$10–$30/mo total**.
 ## Build Order (concrete)
 
 1. **Buy the Pixel 8a refurb (model GKV4X, factory unlocked).** Unlock, factory reset, flash GrapheneOS via web installer. (1 day) — see full walkthrough below. (Earlier drafts said 7a; the 8a is the target — G3 NPU, and the walkthrough below applies identically.)
-2. **Install Termux + F-Droid + Obtainium + Aurora Store.** Install Chromium. Disable everything else. (1 hour)
-3. **Build the `shell.html`:** blank dark screen, mic button, mic-permission flow, transcript display, OpenRouter call, HTML injection. Test in browser first on desktop. (1 weekend)
+2. **Install F-Droid + Obtainium.** Disable everything else. (30 min)
+3. **Build the `app-shell.html` + WebView app:** blank dark screen, mic button, mic-permission flow, transcript display, OpenRouter call, HTML injection. Test the shell in a desktop browser first, then wrap in the minimal Kotlin app. (1 weekend; the iOS `ios-app/app-shell.html` is the reference — port it)
 4. **Voice loop end-to-end:** mic → Whisper → OpenRouter → render returned HTML. (1 weekend)
 5. **Build the bridge:** Rust binary, ModemManager for SMS/calls, bluez for BT, connman for WiFi. Expose via WebSocket. (2 weeks)
-6. **Kiosk it:** Cage + Chromium --kiosk, autostart on boot, lock task mode, disable nav gestures. (1 day)
+6. **Kiosk it:** the WebView app is the default home app + screen pinning; autostart on boot is standard app behavior. (1 hour, no compositor needed)
 7. **Add the local LLM fallback:** llama.cpp + 8B model on Tensor G3 NPU. (1 weekend)
 8. **Write the system prompt** — ongoing art project. Refine weekly. The personality of Phosphor lives here.
 
@@ -306,12 +294,14 @@ All from F-Droid (preinstalled on GrapheneOS):
 - **Obtainium** — pulls APKs straight from GitHub releases, sideload-style
 - **Vanadium** — GrapheneOS's hardened Chromium build with extra exploit mitigations; **use Vanadium for Phosphor**, not stock Chromium
 
-**8. Kiosk-mode the browser for Phosphor**
+**8. Kiosk-mode Phosphor (app path, 2026-09-04 decision)**
 
-- Set Vanadium as the default home app: **Settings → Apps → Default apps → Home app → Vanadium**
-- In Vanadium: **⋮ menu → Settings → Accessibility → Enable Force enable zoom** (helps kiosk scaling)
-- Copy `shell.html` to the phone at `/storage/emulated/0/Download/phosphor/shell.html` (or `/sdcard/...`); open it in Vanadium once and **"Add to Home screen"** so it boots straight there
-- Enable **Lock Task Mode**: Settings → Security → Advanced → Pin windows → enable, then pin Vanadium
+- Build/install the WebView app (see `docs/ANDROID.md`)
+- Set it as the default home app: **Settings → Apps → Default apps → Home app → Phosphor**
+- Enable **screen pinning**: Settings → Security → Advanced → Pin windows → enable, then pin Phosphor
+- The app fullscreens the WebView (edge-to-edge, no status/nav bar) and boots straight into `app-shell.html`
+
+(Alternative kept for reference: the older kiosk-browser route — Vanadium as home app + pinned tab — works too but requires more manual lockdown steps and has no native approval dialog.)
 
 **9. Disable everything else**
 
@@ -373,4 +363,7 @@ The full trust spec (requirements, threat model, verification): `docs/PHOS-SPEC-
 This spec lives alongside the working code in `projects/phosphor/`:
 
 - `PHOSPHOR_SPEC.md` — this document
-- `shell.html` — the browser-as-OS UI, drop on the phone and open with Vanadium/Chromium
+- `shell.html` — the original browser-as-OS UI (kiosk-browser variant, reference)
+- `ios-app/app-shell.html` — the proven shell (voice, generative screens, trust port) — this is what the Android WebView app loads
+- `bridge/` — the Rust bridge (`phosphor-bridge`): WebSocket JSON-RPC on 127.0.0.1:7777, 27 device methods
+- `docs/ANDROID.md` — current Android build plan and next steps

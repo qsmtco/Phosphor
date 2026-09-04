@@ -5,12 +5,13 @@
 **Implementation:** COMPLETE — all phases done 2026-09-04; verification 11/11 PASS (§9)
 **Applicability:** This spec is FRONT-END-AGNOSTIC and is the governing trust
 specification for every Phosphor client: the iOS proof-of-concept (shipped),
-the Telegram bot (shipped), and the upcoming Android/GrapheneOS kiosk shell
-(see `PHOSPHOR_SPEC.md`). The Android bridge (Rust, DBus, localhost:7777)
-replaces the iOS native handlers; every requirement here applies unchanged —
-the approval card renders as a native Android dialog with server-verified
-content, the quarantine/gating/redaction layers live in agent_core and apply
-to any client automatically.
+the Telegram bot (shipped), and the upcoming Android/GrapheneOS
+WebView app (container decision 2026-09-04: thin Kotlin WebView app, not a
+kiosk browser — see `PHOSPHOR_SPEC.md` and `docs/ANDROID.md`). The Android
+bridge (Rust, DBus, localhost:7777) replaces the iOS native handlers; every
+requirement here applies unchanged — the approval card renders as a native
+Android dialog with server-verified content, the quarantine/gating/redaction
+layers live in agent_core and apply to any client automatically.
 **Author:** Qrusher (Hermes Agent)
 **Created:** 2026-09-03
 **Supersedes:** ad-hoc sanitization in `server.py` (scripts stripped blanket)

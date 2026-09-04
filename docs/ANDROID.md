@@ -19,33 +19,48 @@ implemented and audited in the shared agent core and applies to any client.
 
 ## Pixel 8a next steps (in order)
 
+**CONTAINER DECISION (2026-09-04): thin Android WebView app** — the iOS
+architecture ported. NOT a kiosk Vanadium tab. The app fullscreens a WebView
+(Vanadium engine via GrapheneOS's system WebView), owns the bridge process,
+and holds the native pieces: token (never in page scope), approval dialog
+(server-verified content), bridge supervision. Steps below reflect this.
+
 1. **Flash GrapheneOS** via web installer (PHOSPHOR_SPEC.md walkthrough).
    Verify model number first: GKV4X or G6GPR, factory unlocked, NOT Verizon.
-2. **Termux first contact:** install Termux from F-Droid, SSH or curl the
-   server — instant agent access before any custom code.
-3. **Vanadium + shell.html:** the repo-root `shell.html` loads standalone.
-   Kiosk it (home app = Vanadium, pin the tab). This gives the dark screen +
-   mic + HTML rendering with zero native code.
-4. **Voice in the browser:** Vanadium supports the mic capture APIs;
-   wire `shell.html` to Whisper + the server. (iOS used SFSpeechRecognizer —
-   browser WebSpeech/Whisper API is the Android equivalent.)
-5. **phosphor-bridge (Rust):** build from `bridge/`, run as root via Magisk
-   module or `adb` push to `/data/local/tmp`. Exposes `tel.dial`, `geo.*`,
-   `sms.send`, battery, etc. over WebSocket on 127.0.0.1:7777.
-6. **Trust port:** the shell must enforce what iOS enforced (see
-   `PHOSPHOR_SPEC.md` § "What the iOS Proof-of-Concept Proved"): script
-   re-execution rules, external-src block, token proxy, native approval
-   dialog (Android AlertDialog / Compose) with server-verified content.
+2. **Sanity check (any client):** confirm network path to the server —
+   curl phosphor.smtco.co/health from any terminal on the phone (Termux is
+   fine for this one-off debug step; it is not part of the product).
+3. **Build the WebView app:** minimal Kotlin — MainActivity + fullscreen
+   WebView + `addJavascriptInterface` bridges (phosphorApi, phosphorApproval,
+   later phosphorBridge). Load `ios-app/app-shell.html` (the proven shell —
+   port as-is: script re-execution, external-src block, token proxy).
+   Set as home app + screen pinning = kiosk. Reference: `ios/` skeleton.
+4. **Voice:** Android SpeechRecognizer (the SFSpeechRecognizer equivalent)
+   via the native bridge — same pattern as iOS. Wire to Whisper + server.
+5. **phosphor-bridge (Rust):** build from `bridge/` (27 methods, WebSocket
+   JSON-RPC on 127.0.0.1:7777 — already written and compiling). The APP
+   supervises the process (spawn on launch, restart on death) — no Magisk
+   autostart scripts needed.
+6. **Trust port:** the shell enforces what iOS enforced (PHOSPHOR_SPEC.md §
+   "What the iOS Proof-of-Concept Proved"): script re-execution rules,
+   external-src block, token proxy (addJavascriptInterface replaces
+   WKScriptMessageHandler), native approval dialog with server-verified
+   content (P5-H1 pattern).
 7. **Bridge calls gated:** every `window.phosphor.*` hardware call goes
    through the same risk classifier + approval registry the shell commands
    use (spec §7, §8; the R-BRIDGE-3 capability matrix in SPEC-001 tracks).
-8. **Kiosk lockdown:** cage (postmarketOS path) or Android pin-screen +
-   disabled launcher (GrapheneOS path). Autostart on boot.
+8. **Kiosk lockdown:** app = home app, screen pinning on, edge-to-edge
+   WebView. No cage, no Chromium flags, no nav-gesture suppression.
+
+## Resolved
+
+- **Container (2026-09-04): thin Android WebView app** (Kotlin + WebView +
+  native bridges), not a kiosk Vanadium tab. Mirrors the proven iOS
+  architecture; kiosk lockdown via home-app + screen pinning.
 
 ## Open questions for the Captain
 
-- Which GrapheneOS app distribution route for the shell (plain Vanadium tab
-  vs a packaged APK wrapping WebView)?
-- Bridge as root (Magisk) vs unprivileged with Termux:API sensors only?
+- Bridge privileges: root (Magisk module, full DBus/modem access) vs
+  unprivileged app-owned process (fewer permissions, some methods limited)?
 - Does the Pixel replace the iPhone as daily driver during testing, or run
   parallel until the bridge is trusted?

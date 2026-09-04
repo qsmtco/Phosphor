@@ -20,7 +20,7 @@ Phosphor is my answer. The home screen is whatever I need in the moment. Sometim
 - Voice-first is real. No keyboard anywhere in the loop.
 - The trust architecture (see `docs/PHOS-SPEC-001`) survives independent audit.
 
-**The real product runs on a Pixel 8a with GrapheneOS** — see `PHOSPHOR_SPEC.md` for the full build guide. Android is where the thesis lands: no Apple sandbox, a real bridge to the modem/GPS/NFC/camera, kiosk-mode browser as the only interface.
+**The real product runs on a Pixel 8a with GrapheneOS** — see `PHOSPHOR_SPEC.md` for the full build guide and `docs/ANDROID.md` for the current plan. Android is where the thesis lands: no Apple sandbox, a real bridge to the modem/GPS/NFC/camera, and a thin WebView app as the only interface.
 
 ## How it actually works
 
@@ -30,10 +30,10 @@ Three pieces. That's all.
 
 **A Rust binary that talks to the OS.** Phosphor's bridge is six hundred lines of Rust, it runs as root, binds `127.0.0.1:7777`, and exposes a JSON-RPC API. That's it. Every device capability — the modem, the GPS, the camera, NFC, Bluetooth, USB, the battery thermals, the clipboard — comes through as a method call. `tel.dial`. `geo.fix`. `battery.read`. No magic. No SDK. You could rewrite it in Python over a weekend if you really wanted to.
 
-**A browser locked into kiosk mode.** Vanadium, the GrapheneOS-maintained Chromium fork, held in a single tab by `cage`, a tiny Wayland compositor whose entire job is to fullscreen one window. The page it loads is `shell.html` — one static file that talks to the bridge over a WebSocket. When the model responds, it sends back HTML. The page swaps it in. No router. No state library. No bundler. It's the simplest thing that could possibly work.
+**A thin WebView app.** An Android app (Kotlin, tiny — the iOS app's skeleton ported) whose entire job is to fullscreen a WebView, own the bridge process, and hold the native pieces the browser can't: the auth token, the approval dialog, the hardware bridge supervision. The WebView loads `app-shell.html` — one static file that talks to the bridge over a WebSocket and to the server over HTTPS. When the model responds, it sends back HTML. The page swaps it in. No router. No state library. No bundler. (Earlier drafts used a kiosk-locked Vanadium tab; the app approach won — fewer kiosk hacks, native approval dialog, reliable autostart, and the same hardened Vanadium engine underneath via GrapheneOS's system WebView.)
 
 ```
-   you ──► whisper (STT) ──► LLM ──► HTML/CSS/JS ──► Vanadium
+   you ──► whisper (STT) ──► LLM ──► HTML/CSS/JS ──► WebView app
                                        ▲
                                        │
                        device APIs ◄───┘
@@ -76,7 +76,7 @@ No subscription. No in-app purchase. The phone is mine. The model calls go to Op
 
 ## Getting it running
 
-See `PHOSPHOR_SPEC.md` for the complete Pixel 8a + GrapheneOS walkthrough (web installer, ~20 minutes, no command line) and `docs/` for the trust-architecture spec, verification report, and the four independent audit reports.
+See `PHOSPHOR_SPEC.md` for the complete Pixel 8a + GrapheneOS walkthrough (web installer, ~20 minutes, no command line), `docs/ANDROID.md` for the build plan and current next steps, and `docs/` for the trust-architecture spec, verification report, and the independent audit reports.
 
 The iOS proof-of-concept: `ios/` (Swift app) + `ios-app/` (bundled web shell) + `.github/workflows/build-ios.yml` (Mac-less CI). Builds sign and upload to TestFlight automatically.
 
