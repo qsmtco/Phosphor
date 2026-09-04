@@ -179,14 +179,20 @@ function setScreen(html, append = false) {
   // R-UI: innerHTML does NOT execute <script> tags. Re-create them so
   // generated screens run their JS (onclick attrs work natively).
   s.querySelectorAll('script').forEach(oldScript => {
+    // H1 (P4 audit): never resurrect src-carrying scripts. Subresource loads
+    // bypass the native nav allowlist; the prompt mandates inline JS (R-UI-5).
+    if (oldScript.src) { dbg('blocked external script: ' + oldScript.src); return; }
+    // M3 (P4 audit): preserve type (module/json data blocks)
     const s2 = document.createElement('script');
-    if (oldScript.src) {
-      s2.src = oldScript.src;               // external script
-    } else {
-      s2.textContent = oldScript.textContent; // inline script
-    }
-    document.currentScript ? document.currentScript.replaceWith(s2)
-                           : oldScript.replaceWith(s2);
+    if (oldScript.type) s2.type = oldScript.type;
+    // M2 (P4 audit): IIFE-wrap so let/const can't collide across screens.
+    // Top-level function declarations are hoisted to window so inline
+    // onclick="name()" handlers keep working (they resolve at click time).
+    const src = oldScript.textContent.replace(
+      /(^|\n)(\s*)function\s+(\w+)\s*\(/g,
+      '$1$2window.$3 = function(');
+    s2.textContent = '(function(){\n' + src + '\n})();';
+    oldScript.replaceWith(s2);  // L4: currentScript branch removed (dead+harmful)
   });
   s.scrollTop = s.scrollHeight;
 }
@@ -272,6 +278,7 @@ async function send(text) {
 }
 
 /* ── approval result from native card (PHOS-SPEC-001 §8) ── */
+window.phosphor = window.phosphor || {};  // M1: init before use (works w/o userscript)
 window.phosphor.approvalResult = function (approved, status, output) {
   dbg('approval: ' + status);
   setScreen(`<div style="color:${approved ? 'var(--accent)' : 'var(--fg-dim)'}; font-size:14px; padding:6px 4px;">${approved ? 'Approved' : 'Denied'} — ${esc(status)}${output ? '<br><span style="font-family:monospace; font-size:12px;">' + esc(output) + '</span>' : ''}</div>`, true);
