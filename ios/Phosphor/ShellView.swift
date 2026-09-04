@@ -113,6 +113,7 @@ struct ShellView: UIViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "phosphorConfig")
         configuration.userContentController.add(context.coordinator, name: "phosphorMic")
         configuration.userContentController.add(context.coordinator, name: "phosphorApi")
+        configuration.userContentController.add(context.coordinator, name: "phosphorApproval")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsLinkPreview = false
@@ -184,6 +185,7 @@ struct ShellView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorConfig")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorMic")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorApi")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "phosphorApproval")
     }
 
     // MARK: - Coordinator
@@ -202,6 +204,20 @@ struct ShellView: UIViewRepresentable {
             if message.name == "phosphorMic" {
                 Task { @MainActor in
                     VoiceController.shared.toggle()
+                }
+                return
+            }
+            if message.name == "phosphorApproval" {
+                // PHOS-SPEC-001 §8: page asks native to show the SwiftUI
+                // approval card (Captain decision 2026-09-03: native card).
+                Task { @MainActor in
+                    guard let dict = message.body as? [String: Any],
+                          let aid = dict["approval_id"] as? String,
+                          let cmd = dict["command"] as? String else { return }
+                    NotificationCenter.default.post(
+                        name: Notification.Name("phosphorApprovalRequest"),
+                        object: nil,
+                        userInfo: ["approval_id": aid, "command": cmd])
                 }
                 return
             }

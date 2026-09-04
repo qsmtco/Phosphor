@@ -255,6 +255,13 @@ async function send(text) {
     dbg('reply ok, rounds=' + (data.meta ? data.meta.rounds : '?'));
     if (data.html) setScreen(data.html, true);
     else setScreen(`<div style="color:var(--fg); font-size:16px; padding:8px 4px;">${esc(data.text)}</div>`, true);
+    // PHOS-SPEC-001 §8: native SwiftUI approval card (Captain decision)
+    if (data.meta && data.meta.pending && window.webkit?.messageHandlers?.phosphorApproval) {
+      const h = window.webkit.messageHandlers.phosphorApproval;
+      h.postMessage({ approval_id: data.meta.pending.approval_id,
+                      command: data.meta.pending.command });
+      dbg('approval card requested: ' + data.meta.pending.approval_id.slice(0,8));
+    }
   } catch (e) {
     showThinking(false);
     dbg('SEND FAILED: ' + (e.message || e));
@@ -263,6 +270,12 @@ async function send(text) {
     state.busy = false;
   }
 }
+
+/* ── approval result from native card (PHOS-SPEC-001 §8) ── */
+window.phosphor.approvalResult = function (approved, status, output) {
+  dbg('approval: ' + status);
+  setScreen(`<div style="color:${approved ? 'var(--accent)' : 'var(--fg-dim)'}; font-size:14px; padding:6px 4px;">${approved ? 'Approved' : 'Denied'} — ${esc(status)}${output ? '<br><span style="font-family:monospace; font-size:12px;">' + esc(output) + '</span>' : ''}</div>`, true);
+};
 
 /* ── native bridge: voice pipeline (mic toggle + partials + final) ── */
 window.phosphor = window.phosphor || {};

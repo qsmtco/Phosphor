@@ -103,11 +103,19 @@ struct SetupView: View {
 // MARK: - App Entry Point
 
 @main
+// MARK: - Approval request (PHOS-SPEC-001 §8, native SwiftUI card)
+
+struct ApprovalRequest: Identifiable {
+    let id: String        // approval_id from the server
+    let command: String
+}
+
 struct PhosphorApp: App {
     @StateObject private var connectivity = ConnectivityMonitor()
     @StateObject private var voice = VoiceController.shared
     @State private var reloadToken = 0
     @State private var configured = ServerConfig.isConfigured
+    @State private var approval: ApprovalRequest?
 
     var body: some Scene {
         WindowGroup {
@@ -128,6 +136,27 @@ struct PhosphorApp: App {
                 if configured && !connectivity.isOnline {
                     OfflineView(onRetry: { reloadToken += 1 })
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("phosphorApprovalRequest"))) { note in
+                if let id = note.userInfo?["approval_id"] as? String,
+                   let cmd = note.userInfo?["command"] as? String {
+                    approval = ApprovalRequest(id: id, command: cmd)
+                }
+            }
+            .alert("Destructive command", isPresented: Binding(
+                get: { approval != nil },
+                set: { if !$0 { approval = nil } }
+            )) {
+                Button("Approve", role: .destructive) {
+                    if let a = approval { handleApproval(a, approved: true) }
+                    approval = nil
+                }
+                Button("Deny", role: .cancel) {
+                    if let a = approval { handleApproval(a, approved: false) }
+                    approval = nil
+                }
+            } message: {
+                Text(approval?.command ?? "")
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("phosphorEvalJS"))) { note in
                 if let js = note.userInfo?["js"] as? String {
@@ -187,4 +216,39 @@ struct PhosphorApp: App {
         return "\(tmpl)(\(list)); void 0"
     }
 
+    private func handleApproval(_ a: ApprovalRequest, approved: Bool) {
+        let server = ServerConfig.server
+        guard let url = URL(string: server + "/approve") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 130
+        let body: [String: Any] = ["key": ServerConfig.token,
+                                   "approval_id": a.id,
+                                   "deny": !approved,
+                                   "session": "ios-approval"]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            var js: String
+            if let d = data,
+               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               obj["ok"] as? Bool == true {
+                if approved {
+                    let exit = obj["exit"] as? Int ?? -1
+                    let out = (obj["output"] as? String ?? "")
+                        .replacingOccurrences(of: "\\", with: "\\\\")
+                        .replacingOccurrences(of: "`", with: "\\`")
+                        .replacingOccurrences(of: "$", with: "\\$")
+                    js = "window.phosphor?.approvalResult?.(true, 'exit \(exit)', `\(out)`); void 0"
+                } else {
+                    js = "window.phosphor?.approvalResult?.(false, 'denied', ''); void 0"
+                }
+            } else {
+                js = "window.phosphor?.approvalResult?.(false, 'approval failed', ''); void 0"
+            }
+            NotificationCenter.default.post(
+                name: Notification.Name("phosphorEvalJSForShell"),
+                object: nil, userInfo: ["js": js])
+        }.resume()
+    }
 }

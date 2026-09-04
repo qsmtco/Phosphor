@@ -2,6 +2,7 @@
 **Project:** Phosphor (adaptive UI handheld) + DragonCakes Agent Server
 **Spec ID:** PHOS-SPEC-001
 **Status:** APPROVED — Captain JAQ, 2026-09-03 (open questions resolved §12)
+**Implementation:** COMPLETE — all phases done 2026-09-04; verification 11/11 PASS (§9)
 **Author:** Qrusher (Hermes Agent)
 **Created:** 2026-09-03
 **Supersedes:** ad-hoc sanitization in `server.py` (scripts stripped blanket)
@@ -311,7 +312,7 @@ Each requirement verified as follows (evidence recorded in this repo):
 | P2 | Command classifier + JSON pattern file + approval registry + `/approve` endpoint + Telegram approval card + native SwiftUI approval card in iOS app (R-GATE incl. R-GATE-8) | 4 h |
 | P3 | Secret hygiene: token out of page scope, native `phosphorApi` proxy, `.env` read-gating (R-SEC) | **DONE 2026-09-04** |
 | P4 | Remove UI script-stripping (R-UI-1/3); system-prompt JS-enable wording | **DONE 2026-09-04** |
-| P5 | Verification pass (§9) + TestFlight build | 1 h |
+| P5 | Verification pass (§9) + TestFlight build | **DONE 2026-09-04** (SwiftUI approval card shipped; verification 11/11 PASS; TestFlight upload pending Apple's 24h upload-limit reset) |
 
 ## 12. Resolved Questions (Captain-approved 2026-09-03)
 
