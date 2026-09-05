@@ -58,6 +58,28 @@ and holds the native pieces: token (never in page scope), approval dialog
   native bridges), not a kiosk Vanadium tab. Mirrors the proven iOS
   architecture; kiosk lockdown via home-app + screen pinning.
 
+## Pending decisions (do not lose these)
+
+- **Naming:** `agent_core.py` → `phosphor_core.py` (agreed); server rename
+  pending — candidates `gateway.py` (Q's rec: the authenticated front door)
+  vs `phosphor_host.py` vs keep `server.py`. Apply at Android-app build time.
+
+## The 10-step path (canonical)
+
+**Captain (hands-on):**
+1. Flash GrapheneOS — web installer, ~20 min. Model check: GKV4X/G6GPR, NOT Verizon.
+2. First boot: skip Google sign-in, set PIN, decline telemetry. F-Droid preinstalled.
+3. Install: Termux + Termux:Boot (F-Droid), Tailscale.
+4. Termux: `pkg install python`; copy `runtime/` from this repo + `.env` (real keys).
+5. Termux: `python3 server.py` → confirm `127.0.0.1:8787/health`.
+6. Tailscale on phone + desk machine (remote access done).
+
+**Q (code, after 1–6):**
+7. Build the WebView app: fullscreen shell, phosphorApi proxy, native approval dialog; set as home app + pin.
+8. Bridge port: Rust handler bodies → Android APIs, one method at a time, tested on-device (kv → screen → clip → notif → geo → camera → sms → tel).
+9. Bridge methods as agent tools + risk classes (dial/sms/camera gated by the approval card).
+10. End-to-end: "Call Dave" → tool → gate → card → real dial.
+
 ## Open questions for the Captain
 
 - Bridge privileges: root (Magisk module, full DBus/modem access) vs

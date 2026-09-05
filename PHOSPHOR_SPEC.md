@@ -366,4 +366,6 @@ This spec lives alongside the working code in `projects/phosphor/`:
 - `shell.html` — the original browser-as-OS UI (kiosk-browser variant, reference)
 - `ios-app/app-shell.html` — the proven shell (voice, generative screens, trust port) — this is what the Android WebView app loads
 - `bridge/` — the Rust bridge (`phosphor-bridge`): WebSocket JSON-RPC on 127.0.0.1:7777, 27 device methods
+- `runtime/` — the agent runtime (Phosphor's copy): `agent_core.py`, `server.py`, risk patterns, runs on-device via Termux Python
+- `ios/`, `ios-app/` — the completed iOS proof-of-concept (frozen reference)
 - `docs/ANDROID.md` — current Android build plan and next steps
