@@ -112,3 +112,37 @@ Not a separate phase: it is L1/L2 with the UX fully realized.
 - PHOS-SPEC-001 (trust architecture — the foundation this builds on)
 - docs/ANDROID.md (current device state)
 - PHOSPHOR_SPEC.md (product vision, hardware guide)
+
+### Openness research (2026-09-05, Qrusher)
+
+**GrapheneOS forkable components (all permissively licensed):**
+- `GrapheneOS/kernel_pixel` — monolithic kernel sources, 6th–9th gen Pixels
+  (8a/akita included). GPLv2. Buildable; GOS ships kernels built from it.
+- GrapheneOS AOSP hardening tree — hardened malloc, SELinux policies,
+  bionic/framework patches. Apache-2.0/BSD.
+- Vanadium — BSD-3-Clause hardened Chromium.
+- Apps/infrastructure — MIT.
+
+**Firmware reality (closed, permanent):** modem firmware, GPU firmware,
+camera ISP firmware, Trusty — proprietary binaries on separate processors.
+Linux loads them; they are not inspectable. Every Linux phone lives with this.
+
+**Mainline modem milestone (Exynos 5300 — the 8a's modem):**
+- Developer Steffen Deusch (2026) brought up the Exynos 5300 on the Pixel 9a
+  (same modem family): SMS works, calls work (2G CS + VoLTE), mobile data
+  works, wired into ModemManager via a custom SIT plugin. Kernel sources and
+  tools published (github.com/SteffenDE/linux-google-tegu,
+  git.deusch.me/pixel-mainline).
+- Directly relevant to the 8a: same modem silicon, and the bridge's
+  ModemManager-based design (original handlers.rs) matches this stack.
+
+**Weak points on mainline (honest):** camera ISP lacks mainline drivers
+(libcamera/software-ISP workaround at best); power management/suspend is
+Android-tuned on GOS vs rougher on mainline; Pixel device trees and some
+driver binaries are being withdrawn from easy access by Google (post-Android-16
+shift of AOSP reference target to cuttlefish) — GOS self-hosts what it needs.
+
+**Implication for Phosphor:** on GrapheneOS (now) the bridge speaks Android
+APIs; on pure Linux (SPEC-002 target) the bridge speaks ModemManager/DBus and
+the community SIT plugin makes the 8a's modem a viable target. Kernel source
+base: GrapheneOS kernel_pixel + mainline Exynos-modem work.
