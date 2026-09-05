@@ -43,6 +43,10 @@ _load_env(os.path.join(HERE, ".env"))
 
 MODEL = os.environ.get("DC_SUPERVISOR_MODEL", "google/gemini-2.5-flash")
 OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+# MiniMax subscription (or any OpenAI-compatible provider): set
+# OPENAI_BASE_URL + OPENAI_API_KEY to override the OpenRouter endpoint.
+LLM_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+LLM_API_KEY = os.environ.get("OPENAI_API_KEY", OPENROUTER_KEY)
 BRAVE_KEY = os.environ.get("BRAVE_API_KEY", "")
 SESSIONS_PATH = os.path.join(HERE, "telegram_sessions.json")
 MAX_TOOL_ROUNDS = 25
@@ -560,9 +564,9 @@ def call_openrouter_msg(model, messages, temperature=0.4, max_tokens=4000,
         payload["tools"] = tools
         payload["tool_choice"] = tool_choice
     req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
+        LLM_BASE_URL + "/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {OPENROUTER_KEY}",
+        headers={"Authorization": f"Bearer {LLM_API_KEY}",
                  "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -570,6 +574,11 @@ def call_openrouter_msg(model, messages, temperature=0.4, max_tokens=4000,
         choice = data["choices"][0]
         msg = choice.get("message", {}) or {}
         msg["role"] = "assistant"
+        # MiniMax-M3 (and other reasoners) emit <think>...</think> in
+        # content. Strip so reasoning never reaches users/screens/history.
+        if isinstance(msg.get("content"), str):
+            msg["content"] = re.sub(
+                r"<think>[\s\S]*?</think>\s*", "", msg["content"]).strip()
         return msg
     except Exception as e:
         body = ""
