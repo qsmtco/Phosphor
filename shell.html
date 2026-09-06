@@ -5,144 +5,85 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
 <meta name="theme-color" content="#0a0e0a" />
 <title>Phosphor</title>
-
 <!--
-  Phosphor · shell.html
-  ────────────────────
-  The browser-as-OS. Drop this file on the phone (e.g. /opt/phosphor/shell.html)
-  and launch with: chromium --kiosk file:///opt/phosphor/shell.html
-
-  What it does:
-   1. Greets you with a tap-to-talk orb and live device state.
-   2. Records voice → streams to STT (OpenAI Whisper by default).
-   3. Sends transcript to an LLM via OpenRouter with a Phosphor system prompt.
-   4. The LLM returns a one-shot HTML screen, rendered into #screen.
-   5. Buttons inside the rendered HTML can call window.phosphor.* for real
-      device actions (calls, SMS, geofence, search, screenshot, etc.).
-
-  All configuration lives in CONFIG below. Zero build step. No bundler.
-  Open this file in any modern desktop browser to develop.
+  Phosphor · shell.html (chat mode)
+  Chat log: your messages + agent replies stack newest-at-bottom.
+  Agent HTML screens render inline as cards inside the log.
+  Mic orb lives in a pinned bottom toolbar. Cancel (×) appears in the
+  toolbar only while busy.
 -->
-
 <style>
-  /* ─── Phosphor base theme ────────────────────────────────────── */
   :root {
     --bg: #0a0e0a;
     --bg-soft: #111a11;
     --fg: #b6ffb6;
     --fg-dim: #5a8a5a;
     --accent: #7cffb2;
-    --accent-hot: #d6ff5e;
     --warn: #ffb86b;
     --err: #ff5e7c;
     --line: #1d2a1d;
     --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: var(--mono); overflow: hidden; -webkit-tap-highlight-color: transparent; }
 
-  /* ─── Boot screen ────────────────────────────────────────────── */
-  #boot { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 100; transition: opacity 0.4s; }
-  #boot .ring { width: 64px; height: 64px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
-  #boot .label { margin-top: 16px; color: var(--fg-dim); font-size: 12px; letter-spacing: 0.2em; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* ─── Status bar (always visible) ───────────────────────────── */
-  #status { position: fixed; top: 0; left: 0; right: 0; height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; font-size: 11px; color: var(--fg-dim); z-index: 10; pointer-events: none; background: linear-gradient(to bottom, rgba(10,14,10,0.85), transparent); }
+  /* Status bar */
+  #status { position: fixed; top: 0; left: 0; right: 0; height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; font-size: 11px; color: var(--fg-dim); z-index: 20; pointer-events: none; background: linear-gradient(to bottom, rgba(10,14,10,0.9), transparent); }
   #status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 6px; vertical-align: middle; }
-  #status .dot.offline { background: var(--warn); }
   #status .dot.err { background: var(--err); }
-  #status .right { display: flex; gap: 12px; align-items: center; }
+  #status .right { display: flex; gap: 12px; }
 
-  /* ─── Screen (where the LLM draws) ──────────────────────────── */
-  #screen { position: fixed; inset: 28px 0 84px 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  #screen > * { animation: fadein 0.25s ease-out; }
-  @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-
-  /* ─── Default idle screen ───────────────────────────────────── */
-  #idle { display: grid; place-items: center; height: 100%; text-align: center; padding: 20px; }
-  #idle h1 { font-size: 14px; color: var(--fg-dim); letter-spacing: 0.3em; margin: 0 0 24px; font-weight: 400; }
-  #hint { margin-top: 32px; font-size: 12px; color: var(--fg-dim); max-width: 320px; line-height: 1.6; }
-
-  /* ─── Pinned bottom toolbar (mic center) ────────────────────── */
-  #toolbar { position: fixed; left: 0; right: 0; bottom: 0; height: 84px; background: var(--bg-soft); border-top: 1px solid var(--line); display: grid; place-items: center; z-index: 11; }
-  #orb { width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--line); background: radial-gradient(circle at 50% 50%, var(--accent) 0%, rgba(124,255,178,0.05) 60%, transparent 75%); display: grid; place-items: center; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s, background 0.2s; }
-  #orb:hover, #orb:focus { transform: scale(1.05); outline: none; }
-  #orb.listening { background: var(--err); border-color: var(--err); box-shadow: 0 0 40px rgba(255,94,124,0.45); animation: pulse 1.4s ease-in-out infinite; }
-  #orb.thinking { border-color: var(--accent); animation: spin 2s linear infinite; background: conic-gradient(from 0deg, var(--accent), transparent 60%); }
-  #orb .inner { display: none; }
-  #orb .mic-glyph { font-size: 22px; color: var(--accent); pointer-events: none; }
-  #orb.listening .mic-glyph { color: #fff; }
-  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-
-  /* ─── Transcript bubble (above toolbar) ─────────────────────── */
-  #transcript { position: fixed; left: 14px; right: 14px; bottom: 96px; padding: 12px 16px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; color: var(--fg); font-size: 14px; line-height: 1.4; max-height: 26vh; overflow-y: auto; display: none; z-index: 9; }
-  #transcript.show { display: block; }
-  #transcript .role { font-size: 10px; color: var(--fg-dim); letter-spacing: 0.2em; margin-bottom: 4px; }
-
-  /* ─── Stop / cancel (toolbar-right, only while busy) ────────── */
-  #stop { position: fixed; right: 18px; bottom: 24px; width: 36px; height: 36px; border-radius: 50%; background: var(--err); color: #1a0a0a; border: none; font-family: var(--mono); font-size: 16px; cursor: pointer; display: none; z-index: 12; }
-  #stop.show { display: grid; place-items: center; }
-
-  /* ─── Generic content styling (LLM-rendered HTML) ────────────── */
-  .ph-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin: 14px; }
-  .ph-row { display: flex; gap: 12px; align-items: center; padding: 14px; margin: 8px 14px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; min-height: 56px; }
+  /* Chat scroll area */
+  #chat { position: fixed; inset: 28px 0 84px 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px 20px; }
+  .msg { margin: 8px 0; max-width: 88%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.45; word-wrap: break-word; }
+  .msg.you { background: #16251a; border: 1px solid #24382a; margin-left: auto; color: #d9ffe9; }
+  .msg.you .role { font-size: 9px; color: var(--fg-dim); letter-spacing: 0.2em; margin-bottom: 3px; }
+  .msg.agent { background: var(--bg-soft); border: 1px solid var(--line); }
+  .msg.agent .role { font-size: 9px; color: var(--fg-dim); letter-spacing: 0.2em; margin-bottom: 6px; }
+  .msg.agent .card { color: var(--fg); font-size: 14px; }
+  .msg.err { background: #2a1116; border: 1px solid var(--err); color: #ffc9d4; margin: 8px auto; max-width: 95%; }
+  /* Agent-rendered HTML inherits card styles inside the log */
+  .ph-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin: 10px 0; }
+  .ph-row { display: flex; gap: 12px; align-items: center; padding: 12px; margin: 8px 0; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; min-height: 48px; }
   .ph-row:active { background: #182218; }
-  .ph-row .glyph { width: 40px; height: 40px; border-radius: 50%; background: var(--line); display: grid; place-items: center; color: var(--accent); flex: 0 0 auto; }
-  .ph-row .text { flex: 1; font-size: 15px; color: var(--fg); }
-  .ph-row .sub { display: block; font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
-  .ph-btn { display: inline-block; padding: 14px 22px; background: var(--accent); color: #0a0e0a; border: none; border-radius: 12px; font-family: var(--mono); font-size: 15px; font-weight: 600; cursor: pointer; min-height: 48px; }
+  .ph-btn { display: inline-block; padding: 12px 20px; background: var(--accent); color: #0a0e0a; border: none; border-radius: 12px; font-family: var(--mono); font-size: 14px; font-weight: 600; cursor: pointer; min-height: 44px; }
   .ph-btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-  .ph-btn.danger { background: var(--err); }
-  .ph-h { font-size: 22px; margin: 14px 14px 6px; color: var(--fg); font-weight: 500; }
-  .ph-sub { font-size: 12px; color: var(--fg-dim); margin: 0 14px 12px; letter-spacing: 0.1em; }
-  .ph-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 0 14px; }
-  .ph-grid .ph-card { margin: 0; padding: 14px; }
-  .ph-input { width: 100%; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; color: var(--fg); font-family: var(--mono); font-size: 14px; min-height: 48px; }
+  .ph-h { font-size: 20px; margin: 8px 0 6px; color: var(--fg); font-weight: 500; }
+  .ph-sub { font-size: 11px; color: var(--fg-dim); margin: 0 0 10px; letter-spacing: 0.1em; }
+  .ph-input { width: 100%; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; color: var(--fg); font-family: var(--mono); font-size: 14px; min-height: 44px; }
+
+  /* Pinned bottom toolbar */
+  #toolbar { position: fixed; left: 0; right: 0; bottom: 0; height: 84px; background: var(--bg-soft); border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: center; gap: 16px; z-index: 30; }
+  #mic { width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--line); background: radial-gradient(circle at 50% 50%, var(--accent) 0%, rgba(124,255,178,0.06) 60%, transparent 75%); display: grid; place-items: center; cursor: pointer; transition: transform .15s, box-shadow .2s, background .2s; color: var(--accent); }
+  #mic:active { transform: scale(0.95); }
+  #mic.rec { background: var(--err); border-color: var(--err); color: #fff; box-shadow: 0 0 36px rgba(255,94,124,0.5); animation: pulse 1.4s ease-in-out infinite; }
+  #mic.busy { border-color: var(--accent); animation: spin 1.6s linear infinite; }
+  #mic svg { pointer-events: none; }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #cancel { width: 40px; height: 40px; border-radius: 50%; background: var(--err); color: #1a0a0a; border: none; font-family: var(--mono); font-size: 18px; cursor: pointer; display: none; position: absolute; right: 16px; }
+  #cancel.show { display: grid; place-items: center; }
+
+  /* Thinking indicator bubble */
+  .msg.thinking { background: transparent; border: none; color: var(--fg-dim); font-size: 13px; }
+  .msg.thinking .dots::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 </style>
 </head>
 <body>
 
-<!-- ─── BOOT ───────────────────────────────────────────────────── -->
-<div id="boot">
-  <div class="ring"></div>
-  <div class="label">PHOSPHOR · BOOT</div>
-</div>
-
-<!-- ─── STATUS (always visible) ───────────────────────────────── -->
 <div id="status">
   <div><span class="dot" id="dot"></span><span id="model-label">…</span></div>
-  <div class="right">
-    <span id="time">--:--</span>
-    <span id="battery">--</span>
-  </div>
+  <div class="right"><span id="time">--:--</span></div>
 </div>
 
-<!-- ─── SCREEN ────────────────────────────────────────────────── -->
-<div id="screen">
-  <!-- Default idle UI (overwritten by first LLM render) -->
-  <div id="idle">
-    <h1>PHOSPHOR</h1>
-    <div id="hint">Tap the mic. Speak. Phosphor renders whatever you need.</div>
-  </div>
-</div>
+<div id="chat"></div>
 
-<!-- ─── TRANSCRIPT (above toolbar) ─────────────────────────────── -->
-<div id="transcript">
-  <div class="role" id="transcript-role">YOU</div>
-  <div id="transcript-text"></div>
-</div>
-
-<!-- ─── STOP (cancel current action) ─────────────────────────── -->
-<button id="stop" aria-label="Cancel">×</button>
-
-<!-- ─── PINNED TOOLBAR (mic center) ───────────────────────────── -->
 <div id="toolbar">
-  <div id="orb" tabindex="0" role="button" aria-label="Tap to talk">
-    <svg class="mic-glyph" width="22" height="22" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <button id="cancel" aria-label="Cancel">×</button>
+  <div id="mic" role="button" aria-label="Tap to talk">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
       <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
       <line x1="12" y1="19" x2="12" y2="23"/>
@@ -152,439 +93,214 @@
 
 <script>
 'use strict';
+const CONFIG = { uiToken: "__UI_TOKEN__", model: "MiniMax-M3" };
 
-/* ════════════════════════════════════════════════════════════════
-   CONFIG — edit these values, save, reload. No build step.
-   ════════════════════════════════════════════════════════════════ */
-const CONFIG = {
-  // On-device runtime token (injected server-side when served from :8787).
-  // STT and the LLM both live on the device: /transcribe + /message.
-  uiToken: '__UI_TOKEN__',
-  // Kept for reference; the runtime handles the LLM now.
-  model: 'MiniMax-M3',
-  systemPrompt: '',
-};
-
-/* ════════════════════════════════════════════════════════════════
-   DEFAULT SYSTEM PROMPT — the personality of the OS.
-   Override via CONFIG.systemPrompt or the settings UI.
-   ════════════════════════════════════════════════════════════════ */
-const DEFAULT_SYSTEM_PROMPT = `You are Phosphor, the OS of a handheld AI device.
-The screen is 1080×2400 CSS pixels, touch-only, no keyboard.
-
-When the user speaks to you, respond with a SINGLE complete HTML5 fragment
-containing inline CSS and inline JS. No <html>, <head>, or <body>. No markdown.
-No code fences. No commentary. Just the HTML fragment, ready to drop into the
-DOM.
-
-Layout rules:
- • Use the provided CSS classes: .ph-card, .ph-row, .ph-btn, .ph-h, .ph-sub,
-   .ph-grid, .ph-input. They already style for dark theme + Phosphor palette.
- • Large tap targets (min 48px tall). Buttons full-width or stacked.
- • 14px outer margin on cards/rows. Vertical rhythm matters.
- • Never use external CSS, fonts, or scripts — everything inline.
- • Never use emojis unless the user asks for one.
- • Keep total response under 800 words.
-
-Device API (use via inline JS):
- • window.phosphor.call('tel.dial',  { number: '+15551234567' })
- • window.phosphor.call('sms.send',  { to: '+15551234567', body: 'hi' })
- • window.phosphor.call('geo.get',   {}).then(r => r.lat/lng)
- • window.phosphor.call('app.open',  { url: 'https://maps.example' })
- • window.phosphor.call('clip.read', {}).then(r => r.text)
- • window.phosphor.call('notif.set', { title: '...', body: '...' })
- • window.phosphor.call('screen.idle', { seconds: 30 })
-
-When a button needs to send the user back to a prompt, render:
- <button class="ph-btn" onclick="phosphor.ask('your follow-up question')">label</button>
-
-If the user asks for a web page, embed an <iframe> in the card with
-sandbox="allow-scripts allow-forms" src="https://..."`;
-
-// Backfill CONFIG.systemPrompt now that DEFAULT_SYSTEM_PROMPT is in scope.
-if (!CONFIG.systemPrompt) CONFIG.systemPrompt = DEFAULT_SYSTEM_PROMPT;
-
-/* ════════════════════════════════════════════════════════════════
-   PHOSPHOR BRIDGE — real WebSocket client.
-
-   Connects to phosphor-bridge over ws://127.0.0.1:7777/ws and exchanges
-   JSON-RPC 2.0. On desktop (no bridge running) phosphor.call() falls back
-   to a stub so you can iterate on the LLM-rendered HTML without the Rust
-   binary.
-   ════════════════════════════════════════════════════════════════ */
-const BRIDGE_URL = 'ws://127.0.0.1:7777/ws';
-
-// Methods requiring explicit human confirmation before the bridge sees them.
-const DANGEROUS_METHODS = [
-  'tel.dial', 'sms.send',            // cost money / message people
-  'app.open', 'app.share',           // leave the sandbox
-  'kv.set', 'clip.write',            // mutate persisted state / clipboard
-  'screen.idle', 'brightness',       // change device power/display state
-];
-// Methods the user has allowed once this session (cleared by home()).
-const unlockedMethods = new Set();
-
-let ws = null;
-let wsReady = false;
-let callCounter = 0;
-const pendingCalls = new Map();   // id -> { resolve, reject, method, ts }
-const eventHandlers = new Set();  // listeners for push events (geo.fired, etc.)
-
-function connectBridge() {
-  if (ws && (ws.readyState === WebSocket.OPEN ||
-             ws.readyState === WebSocket.CONNECTING)) return;
-  try {
-    ws = new WebSocket(BRIDGE_URL);
-  } catch (e) {
-    console.warn('[phosphor] bridge unreachable:', e);
-    setTimeout(connectBridge, 2000);
-    return;
-  }
-  ws.addEventListener('open', () => {
-    wsReady = true;
-    const dot = $('#dot');
-    if (dot) dot.classList.remove('offline', 'err');
-    console.log('[phosphor] bridge connected');
-  });
-  ws.addEventListener('close', () => {
-    wsReady = false;
-    const dot = $('#dot');
-    if (dot) dot.classList.add('err');
-    // Retry every 2s. Bridge takes ~150ms to come up on boot.
-    setTimeout(connectBridge, 2000);
-  });
-  ws.addEventListener('error', () => {
-    const dot = $('#dot');
-    if (dot) dot.classList.add('err');
-  });
-  ws.addEventListener('message', (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    // RPC response — has id and exactly one of result/error.
-    if (msg.id != null && pendingCalls.has(msg.id)) {
-      const { resolve, reject } = pendingCalls.get(msg.id);
-      pendingCalls.delete(msg.id);
-      if (msg.error) reject(new Error(msg.error.message || 'bridge error'));
-      else resolve(msg.result);
-      return;
-    }
-    // Push event from a background task — fire all listeners.
-    if (msg.event) {
-      for (const h of eventHandlers) {
-        try { h(msg); } catch (e) { console.error('[phosphor] event handler', e); }
-      }
-    }
-  });
-}
-
-function bridgeCall(method, params = {}) {
-  // ─── Danger gate ────────────────────────────────────────────────
-  // Methods that cost money, message people, or mutate device state get a
-  // hard confirmation card in the shell. The LLM can request them, but the
-  // tap that authorises them belongs to the human. This is a control, not
-  // a convention — it lives in the shell, where the LLM cannot reach it.
-  if (DANGEROUS_METHODS.includes(method)) {
-    // Per-session unlock: after the user allows a method once, repeat calls
-    // pass through for this turn. Cleared on home() (i.e. page reload).
-    if (!unlockedMethods.has(method)) return confirmCall(method, params);
-  }
-  // Fall back to a stub if the bridge isn't up — lets you develop the
-  // LLM-prompted UI on desktop without running the Rust binary.
-  if (!wsReady) {
-    console.log('[phosphor.call]', method, params);
-    return Promise.resolve({ ok: true, method, params, stub: true });
-  }
-  const id = `c${++callCounter}-${Date.now()}`;
-  return new Promise((resolve, reject) => {
-    pendingCalls.set(id, { resolve, reject, method, ts: Date.now() });
-    // 30s timeout — protects against hung bridge handlers.
-    setTimeout(() => {
-      if (pendingCalls.has(id)) {
-        pendingCalls.delete(id);
-        reject(new Error(`bridge timeout: ${method}`));
-      }
-    }, 30_000);
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-}
-
-window.phosphor = {
-  call: bridgeCall,
-  // Subscribe to push events from background tasks (geofences, SMS, etc.).
-  onEvent(handler) {
-    eventHandlers.add(handler);
-    return () => eventHandlers.delete(handler);
-  },
-  // The LLM renders a button with onclick="phosphor.ask('...')".
-  ask(prompt) {
-    transcript('YOU', prompt);
-    runTurn(prompt);
-  },
-  // Open a URL in a new top-layer card (for "show me a webpage" requests).
-  browse(url) {
-    const ifr = `<iframe src="${escapeHtml(url)}"
-      style="width:100%;height:80vh;border:0;background:#000"
-      sandbox="allow-scripts allow-forms"></iframe>`;
-    setScreen(`<div class="ph-card">${ifr}</div>`);
-  },
-  // Reset to idle. Also re-arms every danger-gate confirmation.
-  home() { unlockedMethods.clear(); location.reload(); },
-};
-
-/* ──────────────────────────────────────────────────────────────
-   DANGER GATE — confirmation card for sensitive methods.
-   Renders a .ph-card describing the pending call; resolves only
-   after an explicit human tap. Rejects on Deny / card dismissal.
-   ────────────────────────────────────────────────────────────── */
-function confirmCall(method, params) {
-  return new Promise((resolve, reject) => {
-    const summary = escapeHtml(JSON.stringify(params, null, 1)).slice(0, 300);
-    setScreen(`
-      <div class="ph-card" style="border-color: var(--warn)">
-        <div class="ph-h">Allow ${escapeHtml(method)}?</div>
-        <div class="ph-sub">CONFIRMATION REQUIRED</div>
-        <pre style="font-size:12px;color:var(--fg-dim);white-space:pre-wrap;margin:0 0 16px">${summary}</pre>
-        <button class="ph-btn" id="ph-allow">Allow once</button>
-        <div style="height:10px"></div>
-        <button class="ph-btn ghost" id="ph-deny">Deny</button>
-      </div>
-    `);
-    $('#ph-allow').onclick = () => {
-      unlockedMethods.add(method);
-      resolve(bridgeCall(method, params));   // now passes the gate
-    };
-    $('#ph-deny').onclick = () => {
-      setScreen('<div class="ph-card">Blocked.</div>');
-      reject(new Error(`user denied: ${method}`));
-    };
-  });
-}
-
-connectBridge();
-
-/* ════════════════════════════════════════════════════════════════
-   STATE
-   ════════════════════════════════════════════════════════════════ */
-const state = {
-  history: [],         // {role, content} turns for the LLM
-  listening: false,
-  thinking: false,
-  mediaRecorder: null,
-  chunks: [],
-  abortCtrl: null,
-};
-
-/* ════════════════════════════════════════════════════════════════
-   UI HELPERS
-   ════════════════════════════════════════════════════════════════ */
-const $ = (sel) => document.querySelector(sel);
-
-function setScreen(html) {
-  const screen = $('#screen');
-  screen.innerHTML = html;
-  // Scroll new content into view from the top
-  screen.scrollTop = 0;
-}
-
-function transcript(role, text) {
-  const el = $('#transcript');
-  $('#transcript-role').textContent = role;
-  $('#transcript-text').textContent = text;
-  el.classList.add('show');
-  el.scrollTop = el.scrollHeight;
-}
-
-function setOrbState(s) {
-  const orb = $('#orb');
-  orb.classList.remove('listening', 'thinking');
-  if (s) orb.classList.add(s);
-}
-
-function setStopVisible(v) {
-  $('#stop').classList.toggle('show', v);
-}
+const $ = (s) => document.querySelector(s);
+const chat = $("#chat");
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
     ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
+function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
 
-/* ════════════════════════════════════════════════════════════════
-   STATUS BAR — clock + battery + model label
-   ════════════════════════════════════════════════════════════════ */
-function tickClock() {
-  const d = new Date();
-  $('#time').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function addYou(text) {
+  const d = document.createElement("div");
+  d.className = "msg you";
+  d.innerHTML = `<div class="role">YOU</div>${escapeHtml(text)}`;
+  chat.appendChild(d); scrollBottom();
 }
+function addAgentHTML(html) {
+  const d = document.createElement("div");
+  d.className = "msg agent";
+  d.innerHTML = `<div class="role">PHOSPHOR</div><div class="card">${html}</div>`;
+  chat.appendChild(d); scrollBottom();
+}
+function addAgentText(text) {
+  const d = document.createElement("div");
+  d.className = "msg agent";
+  d.innerHTML = `<div class="role">PHOSPHOR</div><div class="card">${escapeHtml(text)}</div>`;
+  chat.appendChild(d); scrollBottom();
+}
+function addError(text) {
+  const d = document.createElement("div");
+  d.className = "msg err";
+  d.textContent = text;
+  chat.appendChild(d); scrollBottom();
+}
+let thinkEl = null;
+function showThinking(label) {
+  clearThinking();
+  thinkEl = document.createElement("div");
+  thinkEl.className = "msg thinking";
+  thinkEl.innerHTML = `${label}<span class="dots"></span>`;
+  chat.appendChild(thinkEl); scrollBottom();
+}
+function clearThinking() { if (thinkEl) { thinkEl.remove(); thinkEl = null; } }
+
+/* ── Status bar ── */
+function tickClock() { $("#time").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 setInterval(tickClock, 30_000); tickClock();
+$("#model-label").textContent = CONFIG.model;
 
-async function refreshBattery() {
-  try {
-    const b = await navigator.getBattery?.();
-    if (b) {
-      const upd = () => $('#battery').textContent = `${Math.round(b.level * 100)}%`;
-      b.addEventListener('levelchange', upd); upd();
+/* ── Bridge (window.phosphor for agent screens) ── */
+const BRIDGE_URL = "ws://127.0.0.1:7777/ws";
+const DANGEROUS = ["tel.dial","sms.send","app.open","app.share","kv.set","clip.write","screen.idle","brightness"];
+const unlocked = new Set();
+let ws = null, wsReady = false, callCounter = 0;
+const pending = new Map();
+
+function connectBridge() {
+  if (ws && ws.readyState <= 1) return;
+  try { ws = new WebSocket(BRIDGE_URL); } catch { setTimeout(connectBridge, 2000); return; }
+  ws.addEventListener("open", () => { wsReady = true; $("#dot").classList.remove("err"); });
+  ws.addEventListener("close", () => { wsReady = false; $("#dot").classList.add("err"); setTimeout(connectBridge, 2000); });
+  ws.addEventListener("error", () => { $("#dot").classList.add("err"); });
+  ws.addEventListener("message", (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.id != null && pending.has(m.id)) {
+      const { resolve, reject } = pending.get(m.id);
+      pending.delete(m.id);
+      m.error ? reject(new Error(m.error.message || "bridge error")) : resolve(m.result);
     }
-  } catch {}
+  });
 }
-refreshBattery();
+function bridgeCall(method, params = {}) {
+  if (DANGEROUS.includes(method) && !unlocked.has(method)) {
+    return Promise.resolve(confirmThen(method, params));
+  }
+  if (!wsReady) return Promise.resolve({ ok: true, stub: true });
+  const id = `c${++callCounter}`;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error("bridge timeout")); } }, 30000);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+}
+function confirmThen(method, params) {
+  const summary = escapeHtml(JSON.stringify(params)).slice(0, 200);
+  addAgentHTML(`<div class="ph-h">Allow ${escapeHtml(method)}?</div>
+    <pre style="font-size:11px;color:var(--fg-dim);white-space:pre-wrap">${summary}</pre>
+    <button class="ph-btn" id="ph-a">Allow once</button>
+    <button class="ph-btn ghost" id="ph-d" style="margin-left:8px">Deny</button>`);
+  const card = chat.lastElementChild.querySelector(".card");
+  card.querySelector("#ph-a").onclick = () => { unlocked.add(method); bridgeCall(method, params); };
+  card.querySelector("#ph-d").onclick = () => { card.innerHTML = "Blocked."; };
+}
+connectBridge();
 
-$('#model-label').textContent = CONFIG.model;
+window.phosphor = {
+  call: bridgeCall,
+  ask(prompt) { addYou(prompt); agentTurn(prompt); },
+  browse(url) {
+    addAgentHTML(`<iframe src="${escapeHtml(url)}" style="width:100%;height:70vh;border:0;background:#000" sandbox="allow-scripts allow-forms"></iframe>`);
+  },
+  home() { unlocked.clear(); location.reload(); },
+  triggerTurn(text) { addYou(text); agentTurn(text); },
+};
 
-/* ════════════════════════════════════════════════════════════════
-   No first-run setup: keys live in the runtime's .env on-device.
-   ════════════════════════════════════════════════════════════════ */
-
-/* ════════════════════════════════════════════════════════════════
-   VOICE CAPTURE — MediaRecorder → webm/opus → STT API
-   ════════════════════════════════════════════════════════════════ */
-async function startListening() {
-  if (state.listening || state.thinking) return;
+/* ── The turn: STT already done; text goes to the runtime ── */
+let abortCtrl = null;
+async function agentTurn(userText) {
+  abortCtrl = new AbortController();
+  showThinking("thinking");
+  $("#mic").classList.add("busy");
+  $("#cancel").classList.add("show");
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+    const r = await fetch("/message", {
+      method: "POST",
+      signal: abortCtrl.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: userText, key: CONFIG.uiToken, session: "shell" }),
     });
-    state.chunks = [];
-    state.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-    state.mediaRecorder.ondataavailable = (e) => { if (e.data.size) state.chunks.push(e.data); };
-    state.mediaRecorder.onstop = () => {
-      stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(state.chunks, { type: 'audio/webm' });
-      transcribe(blob);
-    };
-    state.mediaRecorder.start();
-    state.listening = true;
-    setOrbState('listening');
-    setStopVisible(true);
+    if (!r.ok) throw new Error(`LLM ${r.status}: ${await r.text()}`);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "agent error");
+    clearThinking();
+    if (j.html) addAgentHTML(j.html);
+    if (j.text) addAgentText(j.text);
+    if (!j.html && !j.text) addAgentText("(no output)");
   } catch (err) {
-    setScreen(`<div class="ph-card">Mic denied: ${escapeHtml(err.message)}<br><br>
-      <button class="ph-btn" onclick="phosphor.home()">retry</button></div>`);
+    clearThinking();
+    if (err.name !== "AbortError") addError(`Turn failed: ${err.message}`);
+  } finally {
+    $("#mic").classList.remove("busy");
+    $("#cancel").classList.remove("show");
+    abortCtrl = null;
   }
 }
 
-function stopListening() {
-  if (!state.listening) return;
+/* ── Voice capture ── */
+const state = { listening: false, thinking: false, rec: null, chunks: [], stream: null };
+const micBtn = $("#mic");
+
+micBtn.addEventListener("click", async () => {
+  if (state.listening) { stopRec(); return; }
+  if (state.thinking) return;
+  try {
+    addLog("mic: requesting…");
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+    });
+    addLog("mic: ok");
+    state.chunks = [];
+    state.rec = new MediaRecorder(state.stream, { mimeType: "audio/webm;codecs=opus" });
+    state.rec.ondataavailable = (e) => { if (e.data.size) state.chunks.push(e.data); };
+    state.rec.onstop = () => {
+      state.stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(state.chunks, { type: "audio/webm" });
+      addLog(`recording: ${blob.size} bytes -> transcribing`);
+      transcribe(blob);
+    };
+    state.rec.start();
+    state.listening = true;
+    micBtn.classList.add("rec");
+  } catch (err) {
+    addError(`Mic failed: ${err.name} — ${err.message}. ` +
+      "Fix: Settings → Apps → Vanadium → Permissions → Microphone → Allow");
+  }
+});
+
+function stopRec() {
   state.listening = false;
-  setOrbState(null);
-  state.mediaRecorder?.stop();
+  micBtn.classList.remove("rec");
+  state.rec?.stop();
 }
 
+function addLog(msg) { console.log("[phosphor]", msg); }
+
 async function transcribe(blob) {
-  setOrbState('thinking');
   state.thinking = true;
+  micBtn.classList.add("busy");
+  showThinking("transcribing");
   try {
-    // ── STT: on-device whisper-server via the runtime's /transcribe ──
     const r = await fetch(`/transcribe?key=${encodeURIComponent(CONFIG.uiToken)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
       body: blob,
     });
     if (!r.ok) throw new Error(`STT ${r.status}: ${await r.text()}`);
     const j = await r.json();
-    const text = (j.text || '').trim();
-    if (!text) { finishTurn(); return; }
-    transcript('YOU', text);
-
-    // ── Brain: the audited runtime (session, approvals, quarantine) ──
-    const mr = await fetch('/message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, key: CONFIG.uiToken, session: 'shell' }),
-    });
-    if (!mr.ok) throw new Error(`LLM ${mr.status}: ${await mr.text()}`);
-    const mj = await mr.json();
-    if (!mj.ok) throw new Error(mj.error || 'agent error');
-
-    // Render the agent's screen; also show its text commentary.
-    if (mj.html) {
-      setScreen(mj.html);
-    } else {
-      setScreen(`<div class="ph-card">${escapeHtml(mj.text || '(no output)')}</div>`);
-    }
-    if (mj.text && mj.html) transcript('PHOSPHOR', mj.text);
+    const text = (j.text || "").trim();
+    if (!text) { addAgentText("(heard nothing)"); return; }
+    addYou(text);
+    await agentTurn(text);
   } catch (err) {
-    setScreen(`<div class="ph-card">Turn failed: ${escapeHtml(err.message)}<br><br>
-      <button class="ph-btn" onclick="phosphor.home()">retry</button></div>`);
+    addError(`STT failed: ${err.message}`);
   } finally {
-    finishTurn();
+    state.thinking = false;
+    micBtn.classList.remove("busy");
+    clearThinking();
   }
 }
 
-function finishTurn() {
+$("#cancel").addEventListener("click", () => {
+  abortCtrl?.abort();
   state.thinking = false;
-  setOrbState(null);
-  setStopVisible(false);
-}
-
-/* ════════════════════════════════════════════════════════════════
-   LLM — OpenRouter streaming chat completion
-   ════════════════════════════════════════════════════════════════ */
-async function runTurn(userText) {
-  state.abortCtrl = new AbortController();
-  try {
-    const mr = await fetch('/message', {
-      method: 'POST',
-      signal: state.abortCtrl.signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: userText, key: CONFIG.uiToken, session: 'shell' }),
-    });
-    if (!mr.ok) throw new Error(`LLM ${mr.status}: ${await mr.text()}`);
-    const mj = await mr.json();
-    if (!mj.ok) throw new Error(mj.error || 'agent error');
-    if (mj.html) {
-      setScreen(mj.html);
-    } else {
-      setScreen(`<div class="ph-card">${escapeHtml(mj.text || '(no output)')}</div>`);
-    }
-    if (mj.text && mj.html) transcript('PHOSPHOR', mj.text);
-    finishTurn();
-  } catch (err) {
-    if (err.name !== 'AbortError') {
-      setScreen(`<div class="ph-card">LLM failed: ${escapeHtml(err.message)}<br><br>
-        <button class="ph-btn" onclick="phosphor.home()">retry</button></div>`);
-    }
-    finishTurn();
-  }
-}
-
-/* ════════════════════════════════════════════════════════════════
-   EVENTS
-   ════════════════════════════════════════════════════════════════ */
-$('#orb').addEventListener('click', () => {
-  if (state.listening) stopListening();
-  else startListening();
+  micBtn.classList.remove("busy");
+  $("#cancel").classList.remove("show");
+  clearThinking();
 });
-
-$('#stop').addEventListener('click', () => {
-  if (state.listening) stopListening();
-  else if (state.thinking) { state.abortCtrl?.abort(); finishTurn(); }
-});
-
-// Tap-and-hold to type instead of speak (still no keyboard — uses
-// a hidden contenteditable + Android IME via Web Speech inputmode)
-let pressTimer;
-$('#orb').addEventListener('pointerdown', () => {
-  pressTimer = setTimeout(() => {
-    const q = prompt('Type instead of speak:');
-    if (q) { transcript('YOU', q); runTurn(q); }
-  }, 600);
-});
-$('#orb').addEventListener('pointerup', () => clearTimeout(pressTimer));
-$('#orb').addEventListener('pointerleave', () => clearTimeout(pressTimer));
-
-/* ════════════════════════════════════════════════════════════════
-   BOOT
-   ════════════════════════════════════════════════════════════════ */
-window.addEventListener('load', () => {
-  setTimeout(() => {
-    $('#boot').style.opacity = '0';
-    setTimeout(() => $('#boot').remove(), 400);
-  }, 300);
-});
-
-// Expose runTurn for the bridge to call when an event triggers a turn
-// (e.g. geofence fired, SMS arrived, timer elapsed).
-window.phosphor.triggerTurn = (text) => runTurn(text);
 </script>
 </body>
 </html>
