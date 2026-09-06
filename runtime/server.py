@@ -29,6 +29,90 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import agent_core as core
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# ─────────────────────────────────────────────────────────────────────────
+# Stage B debug page (mic -> MediaRecorder -> /transcribe). Served at
+# GET /test. Log of every step renders on-page so failures are visible.
+# ─────────────────────────────────────────────────────────────────────────
+TEST_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phosphor STT test</title>
+<style>
+ body{background:#1c1d22;color:#e8ecf4;font-family:monospace;margin:0;padding:16px}
+ #btn{width:120px;height:120px;border-radius:50%;border:none;font-size:16px;
+      color:#08301c;background:#35d07f;margin:12px auto;display:block}
+ #btn.rec{background:#ff5555;color:#fff}
+ #log{white-space:pre-wrap;font-size:12px;background:#111216;border-radius:8px;
+      padding:10px;min-height:200px;margin-top:12px}
+ .t{color:#6a7080}
+ .err{color:#ff8080}
+ .ok{color:#7cffb2}
+</style></head><body>
+<h3 style="text-align:center;font-weight:400">STT test (Stage B)</h3>
+<button id="btn">REC</button>
+<div style="text-align:center" id="state">idle</div>
+<div id="log"></div>
+<script>
+const log = (cls, msg) => {
+  const d = document.getElementById("log");
+  const t = new Date().toTimeString().slice(0,8);
+  d.innerHTML += `<span class="t">${t}</span> <span class="${cls}">${msg}</span>\\n`;
+  d.scrollTop = d.scrollHeight;
+};
+const TOKEN = "__TOKEN__";
+let media = null, rec = null, chunks = [];
+
+document.getElementById("btn").onclick = async () => {
+  const btn = document.getElementById("btn");
+  const state = document.getElementById("state");
+  if (rec && rec.state === "recording") {
+    rec.stop();
+    return;
+  }
+  try {
+    log("", "requesting microphone…");
+    media = await navigator.mediaDevices.getUserMedia({audio: true});
+    log("ok", "mic acquired");
+    chunks = [];
+    rec = new MediaRecorder(media);
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      btn.classList.remove("rec"); btn.textContent = "REC";
+      state.textContent = "transcribing…";
+      log("", "stopped, blob size: " + chunks.reduce((s,c)=>s+c.size,0) + " bytes");
+      const blob = new Blob(chunks, {type: chunks[0]?.type || "audio/webm"});
+      try {
+        const t0 = performance.now();
+        const r = await fetch("/transcribe?key=" + encodeURIComponent(TOKEN),
+                              {method: "POST", body: blob});
+        const dt = ((performance.now()-t0)/1000).toFixed(1);
+        const j = await r.json();
+        if (j.ok) {
+          log("ok", `transcribed in ${dt}s: "${j.text}"`);
+          state.textContent = "✓ " + (j.text || "(empty)");
+        } else {
+          log("err", `server ${r.status}: ${j.error}`);
+          state.textContent = "error (see log)";
+        }
+      } catch (e) {
+        log("err", "fetch failed: " + e);
+        state.textContent = "error (see log)";
+      }
+      media.getTracks().forEach(t => t.stop());
+    };
+    rec.start();
+    btn.classList.add("rec"); btn.textContent = "STOP";
+    state.textContent = "recording… tap STOP to transcribe";
+    log("ok", "recording…");
+  } catch (e) {
+    log("err", "mic failed: " + e.name + " — " + e.message);
+    state.textContent = "mic failed (see log)";
+  }
+};
+log("", "page ready. tap REC, speak, tap STOP.");
+</script></body></html>"""
+
 PORT = int(os.environ.get("DC_UI_PORT", "8787"))
 # Auth token: DC_UI_TOKEN in .env (shared with the iOS app). Required.
 AUTH_TOKEN = os.environ.get("DC_UI_TOKEN", "")
@@ -111,6 +195,17 @@ class Handler(BaseHTTPRequestHandler):
             data = body.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif path == "/test":
+            # Stage B debug page: mic -> MediaRecorder -> /transcribe.
+            # Local debug tool; token injected server-side so it's not
+            # stored in any file. NOT part of the product UI.
+            body = TEST_PAGE.replace("__TOKEN__", AUTH_TOKEN)
+            data = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
