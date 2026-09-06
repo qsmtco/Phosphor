@@ -1,10 +1,14 @@
-//! Shared application state — DBus connection, device cache, event broadcast.
+//! Shared application state — device cache, event broadcast.
+//!
+//! Android has no DBus daemon, so the old system/session bus connections
+//! are gone. All hardware access goes through the Termux:API CLI tools
+//! (`termux-battery-status`, `termux-sensor`, …) and, later, a privileged
+//! IPC helper if we ever root the device.
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::Value;
 use tokio::sync::{broadcast, RwLock};
-use zbus::Connection;
 
 /// Cached device state that the LLM context can include cheaply.
 #[derive(Default)]
@@ -32,8 +36,6 @@ pub struct Geofence {
 
 /// Shared, in-process state across all WS connections.
 pub struct AppState {
-    pub conn: Connection,                                  // system bus
-    pub session: Connection,                               // session bus
     pub device: RwLock<DeviceState>,
     pub geofences: RwLock<Vec<Geofence>>,
     /// Fan-out for events pushed from background tasks to every connected browser.
@@ -43,12 +45,8 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new() -> anyhow::Result<Arc<Self>> {
-        let conn = Connection::system().await?;
-        let session = Connection::session().await?;
         let (event_tx, _) = broadcast::channel::<Value>(64);
         Ok(Arc::new(Self {
-            conn,
-            session,
             device: RwLock::new(DeviceState::default()),
             geofences: RwLock::new(Vec::new()),
             event_tx,

@@ -18,8 +18,38 @@ use crate::{RpcRequest, RpcResponse};
 use serde_json::{json, Value};
 use tokio::process::Command;
 
-const TERMUX_API: &str = "com.termux.api";
+/// Directory for the bridge's persisted state (KV store). Override with
+/// PHOSPHOR_BRIDGE_HOME; defaults to Termux home layout.
+fn state_dir() -> String {
+    std::env::var("PHOSPHOR_BRIDGE_HOME")
+        .unwrap_or_else(|_| format!("{}/phosphor/bridge-data", std::env::var("HOME").unwrap_or_else(|_| ".".into())))
+}
+
+/// Privileged helper (telephony, SMS, screen, brightness). Not available on
+/// a stock GrapheneOS/Termux device — every method using it fails soft.
 const IPC_BRIDGE_BIN: &str = "/data/local/tmp/phosphor-ipc";
+
+/// Termux:API CLI tool names, mapped from RPC methods.
+/// Requires: `pkg install termux-api` (CLI) + the Termux:API app.
+fn termux_tool(action: &str) -> Option<&'static str> {
+    Some(match action {
+        "WifiConnectionInfo" => "termux-wifi-connectioninfo",
+        "WifiScan" => "termux-wifi-scaninfo",
+        "BluetoothPairedDevices" => "termux-bluetooth-scaninfo",
+        "Sensor" => "termux-sensor",
+        "BatteryStatus" => "termux-battery-status",
+        "ClipboardGet" => "termux-clipboard-get",
+        "ClipboardSet" => "termux-clipboard-set",
+        "Notification" => "termux-notification",
+        "NotificationRemove" => "termux-notification-remove",
+        "Vibrate" => "termux-vibrate",
+        "Torch" => "termux-torch",
+        "CameraPhoto" => "termux-camera-photo",
+        "Share" => "termux-share",
+        "TTS" => "termux-tts-speak",
+        _ => return None,
+    })
+}
 
 /// Dispatch one RPC request to its handler.
 pub async fn dispatch(state: Arc<AppState>, req: RpcRequest) -> RpcResponse {
@@ -96,20 +126,28 @@ pub async fn dispatch(state: Arc<AppState>, req: RpcRequest) -> RpcResponse {
 }
 
 // ───────────────────────────────────────────────────────────────────────
-// Helper: invoke our privileged IPC helper. It runs as a system app and
-// is the only thing that talks directly to `ITelephony`, `LocationManager`,
-// `IPowerManager`, `WindowManager.setScreenIdleTimeout`, etc.
+// Helper: invoke our privileged IPC helper, if present. On a stock
+// GrapheneOS device this binary doesn't exist and every call fails soft
+// with a clear "unavailable" error instead of hanging or crashing.
 //
 // Wire format: argv[1] = JSON → stdout = JSON. Trivial, debuggable,
 // no IPC libs needed.
 // ───────────────────────────────────────────────────────────────────────
 async fn call_ipc(state: Arc<AppState>, method: &str, params: Value) -> Result<Value, String> {
     let payload = json!({ "method": method, "params": params });
-    let out = Command::new(IPC_BRIDGE_BIN)
+    let out = match Command::new(IPC_BRIDGE_BIN)
         .arg(payload.to_string())
         .output()
         .await
-        .map_err(|e| format!("ipc spawn: {e}"))?;
+    {
+        Ok(o) => o,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "{method} unavailable: privileged helper not installed on this device"
+            ))
+        }
+        Err(e) => return Err(format!("ipc spawn: {e}")),
+    };
     if !out.status.success() {
         return Err(format!(
             "ipc {} failed: {}",
@@ -134,35 +172,95 @@ async fn call_ipc(state: Arc<AppState>, method: &str, params: Value) -> Result<V
 }
 
 // ───────────────────────────────────────────────────────────────────────
-// Helper: invoke Termux:API via `am broadcast`.
-//
-//   am broadcast -a com.termux.api.<ACTION> --es args <base64-json> \
-//                -p com.termux.api
+// Helper: invoke the Termux:API CLI tool for `action` and parse its
+// stdout. The termux-api package ships one binary per API surface and
+// each prints JSON (or plain text for a few) — we pass the params as
+// JSON on stdin for tools that take arguments and parse stdout as JSON
+// when possible, falling back to raw text.
 // ───────────────────────────────────────────────────────────────────────
 async fn call_termux_api(action: &str, params: Value) -> Result<Value, String> {
-    let encoded = base64_encode(serde_json::to_string(&params).unwrap_or_default());
-    let out = Command::new("am")
-        .args([
-            "broadcast",
-            "-a",
-            &format!("com.termux.api.{action}"),
-            "--es",
-            "args",
-            &encoded,
-            "-p",
-            TERMUX_API,
-        ])
+    let tool = termux_tool(action)
+        .ok_or_else(|| format!("no termux tool for action {action}"))?;
+    let args = termux_tool_args(action, &params);
+
+    let out = Command::new(tool)
+        .args(&args)
         .output()
         .await
-        .map_err(|e| format!("am spawn: {e}"))?;
+        .map_err(|e| format!("{tool} spawn: {e} (is `termux-api` installed?)"))?;
     if !out.status.success() {
         return Err(format!(
-            "termux {action}: {}",
+            "{tool}: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Ok(json!({ "ok": true, "action": action, "raw": stdout }))
+    // Most tools print JSON; a few (clipboard-get) print raw text.
+    match serde_json::from_str::<Value>(&stdout) {
+        Ok(v) => Ok(v),
+        Err(_) => Ok(json!({ "ok": true, "action": action, "raw": stdout })),
+    }
+}
+
+/// Per-tool argument wiring. Termux:API CLIs take flags, not stdin JSON.
+fn termux_tool_args(action: &str, params: &Value) -> Vec<String> {
+    let s = |k: &str| params.get(k).and_then(|v| v.as_str()).map(String::from);
+    let u = |k: &str| params.get(k).and_then(|v| v.as_u64());
+    match action {
+        "Vibrate" => vec![format!(
+            "-d {}",
+            u("duration_ms").unwrap_or(500)
+        )],
+        "Torch" => vec![format!(
+            "{}",
+            if s("on").as_deref() == Some("false") { "off" } else { "on" }
+        )],
+        "Sensor" => {
+            let mut v = Vec::new();
+            if let Some(sensor) = s("sensor") {
+                v.push("-s".into());
+                v.push(sensor);
+            }
+            if let Some(d) = u("duration_s") {
+                v.push("-n".into());
+                v.push(format!("{d}"));
+            }
+            v
+        }
+        "CameraPhoto" => {
+            let mut v = vec![format!(
+                "-c {}",
+                u("camera_id").unwrap_or(0)
+            )];
+            if let Some(f) = s("output_path") {
+                v.push(f);
+            }
+            v
+        }
+        "TTS" => {
+            let mut v = Vec::new();
+            if let Some(t) = s("text") {
+                v.push(t);
+            }
+            v
+        }
+        "Notification" => {
+            let mut v = Vec::new();
+            if let Some(t) = s("title") {
+                v.push("--title".into());
+                v.push(t);
+            }
+            if let Some(c) = s("content") {
+                v.push("--content".into());
+                v.push(c);
+            }
+            v
+        }
+        "NotificationRemove" => {
+            s("id").map(|i| vec![i]).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -243,9 +341,11 @@ async fn web_fetch(params: Value) -> Result<Value, String> {
 
 // ───────────────────────────────────────────────────────────────────────
 // Tiny persistent KV used as the LLM's "memory". Backed by a single JSON
-// file at /data/data/com.phosphor.bridge/files/kv.json
+// file under the bridge's state dir (Termux-writable).
 // ───────────────────────────────────────────────────────────────────────
-const KV_PATH: &str = "/data/data/com.phosphor.bridge/files/kv.json";
+fn kv_path() -> String {
+    format!("{}/kv.json", state_dir())
+}
 
 async fn kv_get(params: Value) -> Result<Value, String> {
     let key = params.get("key").and_then(|v| v.as_str()).ok_or("missing key")?;
@@ -269,13 +369,14 @@ async fn kv_set(params: Value) -> Result<Value, String> {
 }
 
 async fn read_kv() -> Result<serde_json::Map<String, Value>, String> {
-    match tokio::fs::read(KV_PATH).await {
+    let path = kv_path();
+    match tokio::fs::read(&path).await {
         Ok(b) => match serde_json::from_slice(&b) {
             Ok(m) => Ok(m),
             // Primary file exists but doesn't parse (corrupt-but-complete
             // is possible even with atomic rename). Fall back to the last
             // known-good backup before giving up.
-            Err(e) => match tokio::fs::read(format!("{KV_PATH}.bak")).await {
+            Err(e) => match tokio::fs::read(format!("{path}.bak")).await {
                 Ok(bb) => serde_json::from_slice(&bb).map_err(|be| {
                     format!("kv.json corrupt ({e}) and backup also corrupt ({be})")
                 }),
@@ -287,22 +388,23 @@ async fn read_kv() -> Result<serde_json::Map<String, Value>, String> {
 }
 
 async fn write_kv(map: &serde_json::Map<String, Value>) -> Result<(), String> {
-    if let Some(parent) = std::path::Path::new(KV_PATH).parent() {
+    let path = kv_path();
+    if let Some(parent) = std::path::Path::new(&path).parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
     // Atomic write: tmp file + rename, so a crash mid-write can never
     // leave a half-written kv.json behind. (Same filesystem → rename is
     // atomic. No fsync: losing the last write on power loss is acceptable
     // for LLM memory notes, and fsync costs battery on a phone.)
-    let tmp = format!("{KV_PATH}.tmp");
+    let tmp = format!("{path}.tmp");
     tokio::fs::write(&tmp, serde_json::to_vec_pretty(map).unwrap())
         .await
         .map_err(|e| e.to_string())?;
     // Rotate: keep the previous generation as .bak so read_kv() can fall
     // back to it if the new file ever parses as valid JSON but is corrupt
     // in a way rename alone can't protect against.
-    let _ = tokio::fs::rename(KV_PATH, format!("{KV_PATH}.bak")).await;
-    tokio::fs::rename(&tmp, KV_PATH).await.map_err(|e| e.to_string())
+    let _ = tokio::fs::rename(&path, format!("{path}.bak")).await;
+    tokio::fs::rename(&tmp, &path).await.map_err(|e| e.to_string())
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -387,27 +489,4 @@ fn haversine_m(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
         + lat1.to_radians().cos() * lat2.to_radians().cos() * (dlon / 2.0).sin().powi(2);
     let c = 2.0 * a.sqrt().asin();
     r * c
-}
-
-/// URL-safe base64 with no padding — avoids pulling the `base64` crate.
-fn base64_encode(s: String) -> String {
-    const ALPHA: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for c in bytes.chunks(3) {
-        let b0 = c[0];
-        let b1 = c.get(1).copied().unwrap_or(0);
-        let b2 = c.get(2).copied().unwrap_or(0);
-        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
-        out.push(ALPHA[((n >> 18) & 0x3F) as usize] as char);
-        out.push(ALPHA[((n >> 12) & 0x3F) as usize] as char);
-        if c.len() > 1 {
-            out.push(ALPHA[((n >> 6) & 0x3F) as usize] as char);
-        }
-        if c.len() > 2 {
-            out.push(ALPHA[(n & 0x3F) as usize] as char);
-        }
-    }
-    out
 }

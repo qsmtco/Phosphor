@@ -17,9 +17,8 @@ futures-util = "0.3"
 # HTTP client (used by the web.fetch method)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
-# DBus to talk to system services that aren't covered by Termux:API
-zbus = { version = "4", default-features = false, features = ["tokio"] }
-zbus_macros = "4"
+# DBus to talk to system services: DROPPED — Android has no DBus daemon.
+# Hardware access now goes through the Termux:API CLI tools.
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
