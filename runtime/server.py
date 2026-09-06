@@ -22,6 +22,7 @@ import json
 import hmac
 import time
 import urllib.parse
+import urllib.request
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -270,8 +271,21 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
                 if not _os.path.exists(wav):
                     self._send(400, {"ok": False, "error": "unsupported audio format"})
                     return
+                # Preferred path: warm whisper-server (model stays loaded,
+                # q5_1 quantized) — one HTTP hop, no process spawn.
+                wav_bytes = open(wav, "rb").read()
+                try:
+                    req = urllib.request.Request(
+                        "http://127.0.0.1:8788/inference", data=wav_bytes,
+                        headers={"Content-Type": "application/octet-stream"})
+                    with urllib.request.urlopen(req, timeout=120) as resp:
+                        text = resp.read().decode("utf-8", "replace").strip()
+                    self._send(200, {"ok": True, "text": text, "engine": "server"})
+                    return
+                except Exception:
+                    pass  # fall through to cold CLI path
                 model = _os.path.expanduser(
-                    "~/whisper.cpp/models/ggml-base.en.bin")
+                    "~/whisper.cpp/models/ggml-base.en-q5_1.bin")
                 cli = _os.path.expanduser(
                     "~/whisper.cpp/build/bin/whisper-cli")
                 if not (_os.path.exists(model) and _os.path.exists(cli)):
@@ -285,7 +299,7 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
                     self._send(504, {"ok": False, "error": "transcription timed out"})
                     return
             text = (r.stdout or "").strip()
-            self._send(200, {"ok": True, "text": text})
+            self._send(200, {"ok": True, "text": text, "engine": "cli"})
             return
 
         try:
