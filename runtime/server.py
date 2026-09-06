@@ -21,6 +21,7 @@ import re
 import json
 import hmac
 import time
+import urllib.parse
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -135,6 +136,59 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
             self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
+        # /transcribe takes raw audio bytes (multipart-free: the shell sends
+        # the audio blob as the request body with ?key= in the query string),
+        # converts to 16 kHz mono WAV via ffmpeg, and runs whisper-cli.
+        # Everything stays on-device: whisper.cpp compiled natively in Termux.
+        if self.path.startswith("/transcribe"):
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            key = (qs.get("key") or [""])[0]
+            if not AUTH_TOKEN or not hmac.compare_digest(key, AUTH_TOKEN):
+                self._send(401, {"ok": False, "error": "bad key"})
+                return
+            audio = self.rfile.read()
+            if not audio:
+                self._send(400, {"ok": False, "error": "empty body"})
+                return
+            if len(audio) > 25_000_000:
+                self._send(413, {"ok": False, "error": "audio too large"})
+                return
+            import tempfile, os as _os
+            with tempfile.TemporaryDirectory() as td:
+                raw = _os.path.join(td, "in.webm")
+                wav = _os.path.join(td, "out.wav")
+                with open(raw, "wb") as f:
+                    f.write(audio)
+                try:
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", raw, "-ar", "16000", "-ac", "1",
+                         "-c:a", "pcm_s16le", wav],
+                        capture_output=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    self._send(400, {"ok": False, "error": "audio conversion timed out"})
+                    return
+                if not _os.path.exists(wav):
+                    self._send(400, {"ok": False, "error": "unsupported audio format"})
+                    return
+                model = _os.path.expanduser(
+                    "~/whisper.cpp/models/ggml-base.en.bin")
+                cli = _os.path.expanduser(
+                    "~/whisper.cpp/build/bin/whisper-cli")
+                if not (_os.path.exists(model) and _os.path.exists(cli)):
+                    self._send(503, {"ok": False, "error": "whisper not built yet"})
+                    return
+                try:
+                    r = subprocess.run(
+                        [cli, "-m", model, "-f", wav, "-np", "-nt", "-t", "6"],
+                        capture_output=True, text=True, timeout=120)
+                except subprocess.TimeoutExpired:
+                    self._send(504, {"ok": False, "error": "transcription timed out"})
+                    return
+            text = (r.stdout or "").strip()
+            self._send(200, {"ok": True, "text": text})
+            return
+
         try:
             length = int(self.headers.get("Content-Length", 0))
             if length > 65536:
