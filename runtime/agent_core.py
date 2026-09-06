@@ -52,8 +52,18 @@ SESSIONS_PATH = os.path.join(HERE, "telegram_sessions.json")
 MAX_TOOL_ROUNDS = 25
 TURN_TIMEOUT_S = 90          # hard ceiling for one agent turn
 
-BASE_PROMPT = """You are DragonCakes, a fast AI agent running on Captain JAQ\'s \\
-home server (Linux, user \'q\'). You have real tools: you can read and write files, \\
+# ── Device identity ───────────────────────────────────────────────────
+# The same runtime runs on the home server (DragonCakes) and on the Pixel
+# (Phosphor). Derive identity from the environment instead of hardcoding,
+# so the agent always knows where it is.
+IS_TERMUX = "/com.termux/" in os.environ.get("PATH", "") or os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
+DEVICE_HOME = os.path.expanduser("~")
+DEVICE_WORKSPACE = os.environ.get("PHOSPHOR_WORKSPACE") or (
+    DEVICE_HOME + "/phosphor" if IS_TERMUX else DEVICE_HOME + "/projects")
+DEVICE_NAME = "Phosphor (Pixel 8a, GrapheneOS/Termux)" if IS_TERMUX else "DragonCakes (home server)"
+DEVICE_USER = "phosphor" if IS_TERMUX else "q"
+
+BASE_PROMPT = f"""You are Phosphor, a fast AI agent running on Captain JAQ's Pixel 8a - GrapheneOS + Termux (Linux user \'phosphor\'), home ' + DEVICE_HOME + ', workspace ' + DEVICE_WORKSPACE + ', OS ' + (__import__('platform').system()) + '/' + (__import__('platform').machine()) + '. You have real tools: you can read and write files, \\
 and the screen renders HTML+JS live - prefer generating screens over writing files for anything user-facing. \\
 run shell commands, search the web, and make HTTP requests. Use them when they help; \\
 answer directly when they don\'t. Be concise and direct. When you use run_command, prefer \\
@@ -274,7 +284,7 @@ def _tool_web_search(query):
 def _tool_http_request(args):
     url = args.get("url", "")
     method = (args.get("method") or "GET").upper()
-    headers = {"User-Agent": "dragoncakes-agent/1.0"}
+    headers = {"User-Agent": "phosphor-agent/1.0"}
     headers.update(args.get("headers") or {})
     data = args.get("body")
     if isinstance(data, (dict, list)):
@@ -405,9 +415,10 @@ def classify_command(cmd):
     return "SAFE", None
 
 def classify_write_path(path):
-    """R-GATE-8: writes outside /home/q/projects/** require approval."""
+    """R-GATE-8: writes outside the device workspace require approval."""
     p = os.path.abspath(os.path.expanduser(str(path)))
-    return "SAFE" if p.startswith("/home/q/projects/") else "DESTRUCTIVE"
+    safe = os.path.join(DEVICE_WORKSPACE, "")
+    return "SAFE" if p.startswith(safe) else "DESTRUCTIVE"
 
 def request_approval(session_key, command):
     import uuid
@@ -515,11 +526,11 @@ def run_tool(name, args, session_key=None):
                 return f.read()[:245760]
         if name == "write_file":
             p = os.path.realpath(os.path.expanduser(str(args.get("path", ""))))
-            if not p.startswith("/home/q/projects/"):
+            if not p.startswith(os.path.join(DEVICE_WORKSPACE, "")):
                 aid = request_approval(session_key or CURRENT_SESSION.get("key", "pending"),
                                        f"write_file: {p}")
                 return (f"[PENDING APPROVAL id={aid} pattern=W1 - write outside "
-                        f"~/projects/ requires user approval: {p}]. Tell the user to approve or deny.")
+                        f"{DEVICE_WORKSPACE}/ requires user approval: {p}]. Tell the user to approve or deny.")
             with open(args["path"], "w") as f:
                 f.write(args.get("content", ""))
             return f"wrote {len(args.get('content', ''))} bytes to {args['path']}"
