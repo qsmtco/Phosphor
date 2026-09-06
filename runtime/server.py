@@ -272,16 +272,19 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
                     self._send(400, {"ok": False, "error": "unsupported audio format"})
                     return
                 # Preferred path: warm whisper-server (model stays loaded,
-                # q5_1 quantized) — one HTTP hop, no process spawn.
-                wav_bytes = open(wav, "rb").read()
+                # q5_1 quantized) — no process spawn of the 148MB-model CLI.
+                # Server wants multipart (file field); curl builds it.
                 try:
-                    req = urllib.request.Request(
-                        "http://127.0.0.1:8788/inference", data=wav_bytes,
-                        headers={"Content-Type": "application/octet-stream"})
-                    with urllib.request.urlopen(req, timeout=120) as resp:
-                        text = resp.read().decode("utf-8", "replace").strip()
-                    self._send(200, {"ok": True, "text": text, "engine": "server"})
-                    return
+                    r = subprocess.run(
+                        ["curl", "-s", "--max-time", "120",
+                         "-F", f"file=@{wav}",
+                         "http://127.0.0.1:8788/inference"],
+                        capture_output=True, text=True, timeout=125)
+                    if r.returncode == 0 and r.stdout.strip():
+                        self._send(200, {"ok": True,
+                                         "text": r.stdout.strip(),
+                                         "engine": "server"})
+                        return
                 except Exception:
                     pass  # fall through to cold CLI path
                 model = _os.path.expanduser(
