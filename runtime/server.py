@@ -203,7 +203,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/shell" or path == "/":
             # The product UI: mic orb -> /transcribe -> /message -> render.
             # Token injected server-side; never stored in a file.
-            shell_path = _os_path.join(HERE, "..", "shell.html")
+            shell_path = _os_path(HERE, "..", "shell.html")
             try:
                 body = open(shell_path, encoding="utf-8").read()
             except OSError:
