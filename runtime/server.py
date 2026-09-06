@@ -147,7 +147,11 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
             if not AUTH_TOKEN or not hmac.compare_digest(key, AUTH_TOKEN):
                 self._send(401, {"ok": False, "error": "bad key"})
                 return
-            audio = self.rfile.read()
+            # Read exactly Content-Length bytes: read-to-EOF deadlocks
+            # because the client keeps the connection open awaiting the
+            # response (learned the hard way — 5-minute hangs).
+            length = int(self.headers.get("Content-Length", 0))
+            audio = self.rfile.read(length) if length > 0 else b""
             if not audio:
                 self._send(400, {"ok": False, "error": "empty body"})
                 return
