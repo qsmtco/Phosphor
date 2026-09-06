@@ -143,26 +143,13 @@
 /* ════════════════════════════════════════════════════════════════
    CONFIG — edit these values, save, reload. No build step.
    ════════════════════════════════════════════════════════════════ */
-// DEFAULT_SYSTEM_PROMPT is declared BELOW (after CONFIG) to avoid the
-// temporal dead zone. CONFIG.defaultSystemPrompt is the placeholder the
-// renderSetup() flow uses; the real prompt is hoisted into CONFIG below.
 const CONFIG = {
-  // OpenRouter is the LLM gateway. Get a key at https://openrouter.ai/keys
-  openrouterKey: localStorage.getItem('ph:openrouterKey') || '',
-  // Default model. Swap freely — OpenRouter exposes 200+ models.
-  model: localStorage.getItem('ph:model') || 'anthropic/claude-sonnet-4.5',
-  // Where the STT API lives. Phosphor records webm/opus and POSTs it here.
-  // Default: OpenAI Whisper. Swap to your own endpoint if you self-host.
-  sttUrl: localStorage.getItem('ph:sttUrl') || 'https://api.openai.com/v1/audio/transcriptions',
-  sttKey: localStorage.getItem('ph:sttKey') || '',           // usually same as openai key
-  // Where the TTS API lives. Empty = no spoken reply.
-  ttsUrl: localStorage.getItem('ph:ttsUrl') || '',
-  ttsKey: localStorage.getItem('ph:ttsKey') || '',
-  ttsVoice: localStorage.getItem('ph:ttsVoice') || 'alloy',
-  // The system prompt that turns an LLM into Phosphor's OS brain.
-  // Falls back to DEFAULT_SYSTEM_PROMPT (defined right below) at runtime
-  // so we don't touch localStorage on every load.
-  systemPrompt: localStorage.getItem('ph:systemPrompt') || '',
+  // On-device runtime token (injected server-side when served from :8787).
+  // STT and the LLM both live on the device: /transcribe + /message.
+  uiToken: '__UI_TOKEN__',
+  // Kept for reference; the runtime handles the LLM now.
+  model: 'MiniMax-M3',
+  systemPrompt: '',
 };
 
 /* ════════════════════════════════════════════════════════════════
@@ -429,39 +416,11 @@ async function refreshBattery() {
 }
 refreshBattery();
 
-$('#model-label').textContent = CONFIG.model.split('/').pop();
+$('#model-label').textContent = CONFIG.model;
 
 /* ════════════════════════════════════════════════════════════════
-   SETTINGS — first-run overlay if no API key
+   No first-run setup: keys live in the runtime's .env on-device.
    ════════════════════════════════════════════════════════════════ */
-function needsSetup() {
-  return !CONFIG.openrouterKey;
-}
-
-function renderSetup() {
-  setScreen(`
-    <div class="ph-card" style="margin-top:60px">
-      <div class="ph-h">First boot</div>
-      <div class="ph-sub">PASTE YOUR OPENROUTER KEY</div>
-      <input id="k1" class="ph-input" type="password" placeholder="sk-or-v1-..."
-        value="${escapeHtml(CONFIG.openrouterKey)}" />
-      <div style="height:10px"></div>
-      <input id="k2" class="ph-input" type="password" placeholder="STT key (OpenAI Whisper, usually same)"
-        value="${escapeHtml(CONFIG.sttKey)}" />
-      <div style="height:16px"></div>
-      <input id="m" class="ph-input" placeholder="model"
-        value="${escapeHtml(CONFIG.model)}" />
-      <div style="height:24px"></div>
-      <button class="ph-btn" id="save">Save &amp; continue</button>
-    </div>
-  `);
-  $('#save').onclick = () => {
-    localStorage.setItem('ph:openrouterKey', $('#k1').value.trim());
-    localStorage.setItem('ph:sttKey',        $('#k2').value.trim());
-    localStorage.setItem('ph:model',         $('#m').value.trim() || CONFIG.model);
-    location.reload();
-  };
-}
 
 /* ════════════════════════════════════════════════════════════════
    VOICE CAPTURE — MediaRecorder → webm/opus → STT API
@@ -501,21 +460,37 @@ async function transcribe(blob) {
   setOrbState('thinking');
   state.thinking = true;
   try {
-    const fd = new FormData();
-    fd.append('file', blob, 'speech.webm');
-    fd.append('model', 'whisper-1');
-    const r = await fetch(CONFIG.sttUrl, {
+    // ── STT: on-device whisper-server via the runtime's /transcribe ──
+    const r = await fetch(`/transcribe?key=${encodeURIComponent(CONFIG.uiToken)}`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${CONFIG.sttKey}` },
-      body: fd,
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: blob,
     });
     if (!r.ok) throw new Error(`STT ${r.status}: ${await r.text()}`);
-    const { text } = await r.json();
-    if (!text?.trim()) { finishTurn(); return; }
+    const j = await r.json();
+    const text = (j.text || '').trim();
+    if (!text) { finishTurn(); return; }
     transcript('YOU', text);
-    await runTurn(text);
+
+    // ── Brain: the audited runtime (session, approvals, quarantine) ──
+    const mr = await fetch('/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, key: CONFIG.uiToken, session: 'shell' }),
+    });
+    if (!mr.ok) throw new Error(`LLM ${mr.status}: ${await mr.text()}`);
+    const mj = await mr.json();
+    if (!mj.ok) throw new Error(mj.error || 'agent error');
+
+    // Render the agent's screen; also show its text commentary.
+    if (mj.html) {
+      setScreen(mj.html);
+    } else {
+      setScreen(`<div class="ph-card">${escapeHtml(mj.text || '(no output)')}</div>`);
+    }
+    if (mj.text && mj.html) transcript('PHOSPHOR', mj.text);
   } catch (err) {
-    setScreen(`<div class="ph-card">STT failed: ${escapeHtml(err.message)}<br><br>
+    setScreen(`<div class="ph-card">Turn failed: ${escapeHtml(err.message)}<br><br>
       <button class="ph-btn" onclick="phosphor.home()">retry</button></div>`);
   } finally {
     finishTurn();
@@ -533,62 +508,22 @@ function finishTurn() {
    ════════════════════════════════════════════════════════════════ */
 async function runTurn(userText) {
   state.abortCtrl = new AbortController();
-  state.history.push({ role: 'user', content: userText });
-
-  // Trim history to last 8 turns to keep latency low
-  const trimmed = state.history.slice(-8);
-
   try {
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const mr = await fetch('/message', {
       method: 'POST',
       signal: state.abortCtrl.signal,
-      headers: {
-        'Authorization': `Bearer ${CONFIG.openrouterKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': location.origin,
-        'X-Title': 'Phosphor',
-      },
-      body: JSON.stringify({
-        model: CONFIG.model,
-        stream: true,
-        messages: [
-          { role: 'system', content: CONFIG.systemPrompt },
-          ...trimmed,
-        ],
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: userText, key: CONFIG.uiToken, session: 'shell' }),
     });
-    if (!r.ok) throw new Error(`LLM ${r.status}: ${await r.text()}`);
-
-    // Stream tokens into the screen in real time
-    setScreen('<div class="ph-card" id="stream"></div>');
-    const streamEl = $('#stream');
-    let acc = '';
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const json = JSON.parse(data);
-          const delta = json.choices?.[0]?.delta?.content || '';
-          acc += delta;
-          // Live render as it streams — strip any accidental markdown fences
-          streamEl.innerHTML = acc.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '');
-          $('#screen').scrollTop = $('#screen').scrollHeight;
-        } catch {}
-      }
+    if (!mr.ok) throw new Error(`LLM ${mr.status}: ${await mr.text()}`);
+    const mj = await mr.json();
+    if (!mj.ok) throw new Error(mj.error || 'agent error');
+    if (mj.html) {
+      setScreen(mj.html);
+    } else {
+      setScreen(`<div class="ph-card">${escapeHtml(mj.text || '(no output)')}</div>`);
     }
-
-    state.history.push({ role: 'assistant', content: acc });
+    if (mj.text && mj.html) transcript('PHOSPHOR', mj.text);
     finishTurn();
   } catch (err) {
     if (err.name !== 'AbortError') {
@@ -631,7 +566,6 @@ window.addEventListener('load', () => {
   setTimeout(() => {
     $('#boot').style.opacity = '0';
     setTimeout(() => $('#boot').remove(), 400);
-    if (needsSetup()) renderSetup();
   }, 300);
 });
 

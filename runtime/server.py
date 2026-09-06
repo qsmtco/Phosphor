@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import agent_core as core
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+_os_path = os.path.join
 
 # ─────────────────────────────────────────────────────────────────────────
 # Stage B debug page (mic -> MediaRecorder -> /transcribe). Served at
@@ -196,6 +197,21 @@ class Handler(BaseHTTPRequestHandler):
             data = body.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif path == "/shell" or path == "/":
+            # The product UI: mic orb -> /transcribe -> /message -> render.
+            # Token injected server-side; never stored in a file.
+            shell_path = _os_path.join(HERE, "..", "shell.html")
+            try:
+                body = open(shell_path, encoding="utf-8").read()
+            except OSError:
+                body = "<h1>shell.html missing</h1>"
+            body = body.replace("__UI_TOKEN__", AUTH_TOKEN)
+            data = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
