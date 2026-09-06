@@ -256,6 +256,7 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
             parsed = urllib.parse.urlparse(self.path)
             qs = urllib.parse.parse_qs(parsed.query)
             key = (qs.get("key") or [""])[0]
+            mode = (qs.get("mode") or ["local"])[0]
             if not AUTH_TOKEN or not hmac.compare_digest(key, AUTH_TOKEN):
                 self._send(401, {"ok": False, "error": "bad key"})
                 return
@@ -270,6 +271,41 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
             if len(audio) > 25_000_000:
                 self._send(413, {"ok": False, "error": "audio too large"})
                 return
+            # ── REMOTE mode: OpenRouter transcription (whisper-large class).
+            # Falls back to local automatically on any failure — a dead
+            # network must never mean a dead mic.
+            if mode == "remote":
+                or_key = os.environ.get("OPENROUTER_STT_KEY", "")
+                if not or_key:
+                    mode = "local"  # no key configured: stay local, tell shell
+                    remote_note = "no OPENROUTER_STT_KEY in .env — used local"
+                else:
+                    try:
+                        import base64 as _b64
+                        b64audio = _b64.b64encode(audio).decode()
+                        payload = json.dumps({
+                            "model": "openai/whisper-large-v3",
+                            "audio": b64audio,
+                        })
+                        req = urllib.request.Request(
+                            "https://openrouter.ai/api/v1/audio/transcriptions",
+                            data=payload.encode(),
+                            headers={
+                                "Authorization": f"Bearer {or_key}",
+                                "Content-Type": "application/json",
+                            })
+                        with urllib.request.urlopen(req, timeout=60) as resp:
+                            j = json.loads(resp.read().decode())
+                        text = (j.get("text") or "").strip()
+                        self._send(200, {"ok": True, "text": text,
+                                         "engine": "remote"})
+                        return
+                    except Exception as e:
+                        remote_note = f"remote failed ({e}) — used local"
+                        mode = "local"
+            else:
+                remote_note = None
+
             import tempfile, os as _os
             with tempfile.TemporaryDirectory() as td:
                 raw = _os.path.join(td, "in.webm")
@@ -302,8 +338,9 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
                             text = json.loads(r.stdout).get("text", "").strip()
                         except ValueError:
                             text = r.stdout.strip()
+                        note = {"note": remote_note} if remote_note else {}
                         self._send(200, {"ok": True, "text": text,
-                                         "engine": "server"})
+                                         "engine": "server", **note})
                         return
                 except Exception:
                     pass  # fall through to cold CLI path
@@ -322,7 +359,8 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
                     self._send(504, {"ok": False, "error": "transcription timed out"})
                     return
             text = (r.stdout or "").strip()
-            self._send(200, {"ok": True, "text": text, "engine": "cli"})
+            note = {"note": remote_note} if remote_note else {}
+            self._send(200, {"ok": True, "text": text, "engine": "cli", **note})
             return
 
         try:
