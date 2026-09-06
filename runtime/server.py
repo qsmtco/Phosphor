@@ -281,8 +281,12 @@ h1{{font-weight:300;letter-spacing:.5px;margin:0 0 12px}} p{{color:#6a7080;font-
                          "http://127.0.0.1:8788/inference"],
                         capture_output=True, text=True, timeout=125)
                     if r.returncode == 0 and r.stdout.strip():
-                        self._send(200, {"ok": True,
-                                         "text": r.stdout.strip(),
+                        # Server responds as JSON {"text": "..."} by default
+                        try:
+                            text = json.loads(r.stdout).get("text", "").strip()
+                        except ValueError:
+                            text = r.stdout.strip()
+                        self._send(200, {"ok": True, "text": text,
                                          "engine": "server"})
                         return
                 except Exception:
