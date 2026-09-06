@@ -34,7 +34,7 @@
   #status .right { display: flex; gap: 12px; }
 
   /* Chat scroll area */
-  #chat { position: fixed; inset: 28px 0 84px 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px 20px; }
+  #chat { position: fixed; inset: 28px 0 100px 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px 20px; }
   .msg { margin: 8px 0; max-width: 88%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.45; word-wrap: break-word; }
   .msg.you { background: #16251a; border: 1px solid #24382a; margin-left: auto; color: #d9ffe9; }
   .msg.you .role { font-size: 9px; color: var(--fg-dim); letter-spacing: 0.2em; margin-bottom: 3px; }
@@ -53,15 +53,15 @@
   .ph-input { width: 100%; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; color: var(--fg); font-family: var(--mono); font-size: 14px; min-height: 44px; }
 
   /* Pinned bottom toolbar */
-  #toolbar { position: fixed; left: 0; right: 0; bottom: 0; height: 84px; background: var(--bg-soft); border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: center; gap: 16px; z-index: 30; }
-  #mic { width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--line); background: radial-gradient(circle at 50% 50%, var(--accent) 0%, rgba(124,255,178,0.06) 60%, transparent 75%); display: grid; place-items: center; cursor: pointer; transition: transform .15s, box-shadow .2s, background .2s; color: var(--accent); }
+  #toolbar { position: fixed; left: 0; right: 0; bottom: 0; height: 100px; background: var(--bg-soft); border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: center; gap: 16px; z-index: 30; }
+  #mic { width: 80px; height: 80px; margin-top: -14px; border-radius: 50%; border: 2px solid var(--line); background: radial-gradient(circle at 50% 50%, var(--accent) 0%, rgba(124,255,178,0.06) 60%, transparent 75%); display: grid; place-items: center; cursor: pointer; transition: transform .15s, box-shadow .2s, background .2s; color: var(--accent); }
   #mic:active { transform: scale(0.95); }
   #mic.rec { background: var(--err); border-color: var(--err); color: #fff; box-shadow: 0 0 36px rgba(255,94,124,0.5); animation: pulse 1.4s ease-in-out infinite; }
   #mic.busy { border-color: var(--accent); animation: spin 1.6s linear infinite; }
   #mic svg { pointer-events: none; }
   @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #cancel { width: 40px; height: 40px; border-radius: 50%; background: var(--err); color: #1a0a0a; border: none; font-family: var(--mono); font-size: 18px; cursor: pointer; display: none; position: absolute; right: 16px; }
+  #cancel { width: 44px; height: 44px; border-radius: 50%; background: var(--err); color: #1a0a0a; border: none; font-family: var(--mono); font-size: 18px; cursor: pointer; display: none; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); }
   #cancel.show { display: grid; place-items: center; }
 
   /* Thinking indicator bubble */
@@ -82,7 +82,7 @@
 <div id="toolbar">
   <button id="cancel" aria-label="Cancel">×</button>
   <div id="mic" role="button" aria-label="Tap to talk">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
       <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -217,9 +217,10 @@ async function agentTurn(userText) {
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || "agent error");
     clearThinking();
+    // Render exactly ONE answer: the screen if present, else the text.
     if (j.html) addAgentHTML(j.html);
-    if (j.text) addAgentText(j.text);
-    if (!j.html && !j.text) addAgentText("(no output)");
+    else if (j.text) addAgentText(j.text);
+    else addAgentText("(no output)");
   } catch (err) {
     clearThinking();
     if (err.name !== "AbortError") addError(`Turn failed: ${err.message}`);
