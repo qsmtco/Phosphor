@@ -135,18 +135,20 @@ pub async fn dispatch(state: Arc<AppState>, req: RpcRequest) -> RpcResponse {
 // ───────────────────────────────────────────────────────────────────────
 async fn call_ipc(state: Arc<AppState>, method: &str, params: Value) -> Result<Value, String> {
     let payload = json!({ "method": method, "params": params });
-    let out = match Command::new(IPC_BRIDGE_BIN)
-        .arg(payload.to_string())
-        .output()
+    let out = match tokio::time::timeout(Duration::from_secs(10),
+        Command::new(IPC_BRIDGE_BIN)
+            .arg(payload.to_string())
+            .output())
         .await
     {
-        Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(format!(
                 "{method} unavailable: privileged helper not installed on this device"
             ))
         }
-        Err(e) => return Err(format!("ipc spawn: {e}")),
+        Ok(Err(e)) => return Err(format!("ipc spawn: {e}")),
+        Err(_) => return Err(format!("{method} unavailable: ipc timed out")),
     };
     if !out.status.success() {
         return Err(format!(
@@ -183,10 +185,12 @@ async fn call_termux_api(action: &str, params: Value) -> Result<Value, String> {
         .ok_or_else(|| format!("no termux tool for action {action}"))?;
     let args = termux_tool_args(action, &params);
 
-    let out = Command::new(tool)
-        .args(&args)
-        .output()
+    // Termux:API CLIs block forever when the companion Termux:API app is
+    // missing — never let that hang a WS connection.
+    let out = tokio::time::timeout(Duration::from_secs(10),
+        Command::new(tool).args(&args).output())
         .await
+        .map_err(|_| format!("{tool}: timed out (is the Termux:API app installed?)"))?
         .map_err(|e| format!("{tool} spawn: {e} (is `termux-api` installed?)"))?;
     if !out.status.success() {
         return Err(format!(
