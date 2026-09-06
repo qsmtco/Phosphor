@@ -1,0 +1,74 @@
+{
+  "destructive": [
+    {
+      "id": "D1",
+      "re": "(?i)(\\brm\\b\\s+[^|>&;]*-[a-z]*[rf])|(\\brm\\b[^&;|]*(\\s/\\s|\\s/$|\\s/\\*))",
+      "why": "recursive/forced delete"
+    },
+    {
+      "id": "D2",
+      "re": "(?i)\\b(mkfs(\\.\\w+)?|dd)\\b",
+      "why": "filesystem/device overwrite"
+    },
+    {
+      "id": "D3",
+      "re": "(?i)\\b(shutdown|reboot|halt|poweroff)\\b",
+      "why": "host power state"
+    },
+    {
+      "id": "D4",
+      "re": "(?i)\\b(chmod|chown)\\b[^&;|]*(/etc|/usr|\\.ssh|\\.gnupg)",
+      "why": "system/key perms"
+    },
+    {
+      "id": "D5",
+      "re": ">\\s*/etc/|>>\\s*/etc/|\\btee\\s+/etc/",
+      "why": "system config writes"
+    },
+    {
+      "id": "D6",
+      "re": "(?i)\\b(iptables|ufw|firewall-cmd)\\b",
+      "why": "firewall mutation"
+    },
+    {
+      "id": "D7",
+      "re": "(?i)\\b(useradd|userdel|usermod|passwd)\\b",
+      "why": "account mutation"
+    },
+    {
+      "id": "D8",
+      "re": "(?i)\\bsystemctl\\b\\s+(start|stop|restart|disable)",
+      "why": "service state change"
+    },
+    {
+      "id": "D9",
+      "re": "(?i)\\bkill(all)?\\b",
+      "why": "process termination"
+    },
+    {
+      "id": "D10",
+      "re": "(?i)(\\b(curl|wget)\\b[^|]*\\|\\s*(ba|z|fi)?sh\\b)|(\\bbase64\\b[^|]*-d[^|]*\\|\\s*(ba|z|fi)?sh\\b)",
+      "why": "remote-code-exec pattern"
+    },
+    {
+      "id": "D11",
+      "re": "(?i)\\bgit\\s+push\\b[^&;|]*(-f|--force)",
+      "why": "history rewrite"
+    },
+    {
+      "id": "D12",
+      "re": "(?i)(\\.ssh|\\.gnupg|\\.pem\\b|\\.p12\\b|\\.p8\\b|\\.key\\b|\\.env\\b|\\.git-credentials|id_rsa|id_ed25519|id_ecdsa)",
+      "why": "secret access"
+    },
+    {
+      "id": "D13",
+      "re": "(?i)\\b(npm|pip3?|uv|gem|cargo)\\s+(install|publish)\\b",
+      "why": "supply-chain writes"
+    },
+    {
+      "id": "D14",
+      "re": "(?i)\\bdocker\\b[^&;|]*(\\brm\\b|\\bprune\\b|\\bsystem\\b)",
+      "why": "container destruction"
+    }
+  ]
+}

@@ -39,3 +39,6 @@ secrets/
 
 # Magisk module output (if you build it locally)
 phosphor-module/
+# Runtime exceptions: these MUST ship (fail-closed needs the patterns file)
+!runtime/command_risk_patterns.json
+!runtime/.env.example
