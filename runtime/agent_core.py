@@ -62,6 +62,7 @@ DEVICE_WORKSPACE = os.environ.get("PHOSPHOR_WORKSPACE") or (
     DEVICE_HOME + "/phosphor" if IS_TERMUX else DEVICE_HOME + "/projects")
 DEVICE_NAME = "Phosphor (Pixel 8a, GrapheneOS/Termux)" if IS_TERMUX else "DragonCakes (home server)"
 DEVICE_USER = "phosphor" if IS_TERMUX else "q"
+DEVICE_WORKSPACE_ABS = os.path.realpath(DEVICE_WORKSPACE) if DEVICE_WORKSPACE else ""
 
 # Trusted directories (env-driven) — full read/write/execute without
 # approval inside any of these paths. Use sparingly: opt-in via
@@ -114,8 +115,8 @@ Relative paths (./foo.txt, foo.txt) and bare names (hello.txt) are not \\
 portable — resolve them against DEVICE_WORKSPACE first, then echo the \\
 absolute path you used in your reply.
 
-TRUSTED WORKSPACE (you have full access here):
-- Your workspace is DEVICE_WORKSPACE. Inside it you have unrestricted \\
+TRUSTED WORKSPACE (locked - do not paraphrase):
+- Your EXACT workspace path is: DEVICE_WORKSPACE_ABS. Inside it you have unrestricted \\
 read/write/execute. The user has explicitly opted in: no approval \\
 prompts, no "should I do this?" — just do it. \\
 - ALL file writes, ALL shell commands, ANY operation that targets a path \\
@@ -613,7 +614,7 @@ def run_tool(name, args, session_key=None):
                 r = subprocess.run(args["cmd"], shell=True, capture_output=True,
                                    text=True, timeout=120)
                 out = (r.stdout or "") + (r.stderr or "")
-                return f"[exit {r.returncode}]\n" + out[:8000]
+                return f"[cwd={DEVICE_WORKSPACE_ABS}] [exit {r.returncode}]\n" + out[:8000]
             finally:
                 os.chdir(cwd_before)
         if name == "web_search":
