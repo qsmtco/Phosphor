@@ -577,11 +577,20 @@ def run_tool(name, args, session_key=None):
                                        f"write_file: {p}")
                 return (f"[PENDING APPROVAL id={aid} pattern=W1 - write outside "
                         f"{DEVICE_WORKSPACE}/ requires user approval: {p}]. Tell the user to approve or deny.")
-            with open(args["path"], "w") as f:
+            # Resolve bare/relative paths against the workspace so
+            # write_file("hello.txt") and write_file("./hello.txt") both
+            # land in the workspace.
+            wp = str(args.get("path", ""))
+            if not os.path.isabs(wp) and not wp.startswith("~"):
+                wp = os.path.join(DEVICE_WORKSPACE, wp)
+            with open(wp, "w") as f:
                 f.write(args.get("content", ""))
-            return f"wrote {len(args.get('content', ''))} bytes to {args['path']}"
+            return f"wrote {len(args.get('content', ''))} bytes to {wp}"
         if name == "list_dir":
-            entries = sorted(os.listdir(args.get("path", ".")))[:200]
+            lp = str(args.get("path", "."))
+            if lp == "." or (not os.path.isabs(lp) and not lp.startswith("~")):
+                lp = DEVICE_WORKSPACE
+            entries = sorted(os.listdir(lp))[:200]
             return "\n".join(entries) or "(empty)"
         if name == "run_command":
             if FULL_TRUST:
@@ -593,10 +602,20 @@ def run_tool(name, args, session_key=None):
                 return (f"[PENDING APPROVAL id={aid} pattern={pid} - "
                         f"destructive command held, NOT executed: {args['cmd']}]. "
                         f"Tell the user to approve or deny.")
-            r = subprocess.run(args["cmd"], shell=True, capture_output=True,
-                               text=True, timeout=120)
-            out = (r.stdout or "") + (r.stderr or "")
-            return f"[exit {r.returncode}]\n" + out[:8000]
+            # Run commands in the workspace so relative paths
+            # ("echo hi > hello.txt") land where the agent thinks.
+            cwd_before = os.getcwd()
+            try:
+                os.chdir(DEVICE_WORKSPACE)
+            except OSError:
+                pass
+            try:
+                r = subprocess.run(args["cmd"], shell=True, capture_output=True,
+                                   text=True, timeout=120)
+                out = (r.stdout or "") + (r.stderr or "")
+                return f"[exit {r.returncode}]\n" + out[:8000]
+            finally:
+                os.chdir(cwd_before)
         if name == "web_search":
             res = _tool_web_search(args["query"])
             if check_injection_attempt(args["query"], res[:4000]):
