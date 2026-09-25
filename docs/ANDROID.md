@@ -7,22 +7,24 @@ implemented and audited in the shared agent core and applies to any client.
 
 ---
 
-> **STATUS NOTE — 2026-09-25 — a conflict that needs the Captain.**
+> **STATUS NOTE — 2026-09-25 — resolved; this is superseded PoC history.**
 > This document's *container decision* (2026-09-04, below) is "thin Android
 > WebView app, **NOT** a kiosk Vanadium tab" — an app running **inside stock
-> GrapheneOS**. Phases 1–3 did something materially different: the project built
-> a **GrapheneOS-derived OS from source, signed it with its own keys, unlocked
-> the bootloader, and flashed it** as the device's own system image — see
-> `docs/PHASE-3-FLASHING-AND-RECOVERY.md` and
-> `docs/PHASE-3-KEY-MANAGEMENT-DESIGN.md`.
+> GrapheneOS**. Captain JAQ has since confirmed that most of what is in this repo
+> is proof-of-concept and testing material, and that **`docs/PHOSPHOR-VISION.md`
+> is the goal and the source of truth**. The vision calls for an agent-native
+> phone OS based on GrapheneOS, with Phosphor as the primary system shell and the
+> agent-designed HTML surface integrated into it as a real OS surface "rather than
+> an isolated browser page" (vision §Primary interaction model). Phases 1–3 began
+> exactly that: a GrapheneOS-derived image, built, signed with project keys,
+> flashed and booted on the Pixel.
 >
-> Those are different architectures, not different emphases. Either the container
-> decision is superseded by the Phase 1–3 direction, or the build direction has
-> drifted from an approved decision. This is flagged rather than resolved
-> because it is a Captain call. Until it is settled, treat the container decision
-> and the 10-step path below as describing the **superseded** path — in
-> particular, steps 1 and 7 assume stock GrapheneOS plus a home-app WebView, not
-> a project-built system image.
+> Treat the container decision and the 10-step path below as **superseded
+> proof-of-concept history** — valuable for what it proved (the voice loop,
+> generated screens, the trust architecture, hardware calls), not as the target
+> architecture. The Termux, Tailscale and Python-runtime steps in particular are
+> bring-up material per the vision's §Current prototype context, which says not to
+> keep adding infrastructure around them just to preserve the prototype shape.
 
 ## Already done (from the iOS PoC — inherits directly)
 

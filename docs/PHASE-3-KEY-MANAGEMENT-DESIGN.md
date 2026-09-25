@@ -37,7 +37,7 @@ as open items in §10.
 | D1 | **One permanent key set** for this device — no separate dev/release sets | The AVB key is what the bootloader trusts; changing it means unlocking and wiping again. Committing once avoids a second wipe. |
 | D2 | **The YubiKey gates access to encrypted keys** (not hardware signing) | Gets the physical-token property with zero changes to GrapheneOS's signing flow. See §5. |
 | D3 | **Backup and loss mechanics deferred** — risk documented now, mechanics decided when keys are generated | Keeps the decision where it belongs, next to the actual key generation. See §7. |
-| D4 | **The bootloader will not be relocked** — it stays unlocked for development | Convenience for the development loop. Consequences accepted and recorded in §8. |
+| D4 | **The bootloader stays unlocked during development and is relocked when the build and key chain are ready** | Efficiency for the development loop, with the end state the vision specifies. Consequences and the relock path recorded in §8. Revised 2026-09-25 against `PHOSPHOR-VISION.md`, which is the source of truth. |
 
 D4 is the decision with the widest blast radius, and §8 states plainly what it
 costs. It is not a security-neutral choice.
@@ -286,9 +286,27 @@ deferred decision actually needs to resolve.
 
 ---
 
-## 8. Bootloader posture: permanently unlocked (D4)
+## 8. Bootloader posture: unlocked during development, relock when ready (D4)
 
-**Decision:** the bootloader stays unlocked. It will not be relocked.
+**Decision (revised 2026-09-25 against the vision):** the bootloader **stays
+unlocked throughout development** and is **relocked when the build and key chain
+are ready**. It is not relocked now, and it is not intended to stay open forever.
+
+> *Revision note.* This decision originally read: "the bootloader stays unlocked.
+> It will not be relocked." Captain JAQ has since confirmed that
+> `docs/PHOSPHOR-VISION.md` is the goal and the source of truth, and the vision is
+> explicit about the intended arc — keep the bootloader unlocked during active
+> development, install Phosphor's AVB public key as the device's custom
+> verified-boot root of trust, and *"relock the bootloader only when the build and
+> key chain are ready for a secured development/release device"* (vision §Build,
+> signing, flashing, and feasibility findings, steps 6–7). It adds that a locked
+> device running our key "may show the standard custom-OS warning, normally a
+> yellow screen, while still using verified boot and rollback protection".
+> The vision's §Design principles also warn against confusing a prototype
+> workaround with the target architecture, and a permanently unlocked bootloader
+> is exactly that. The cost is unchanged and real — both transitions wipe — so
+> relocking stays a deliberate step for the Phase 15 revisit below, not a
+> convenience.
 
 **What that means, stated plainly:**
 

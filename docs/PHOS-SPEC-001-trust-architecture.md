@@ -379,22 +379,25 @@ GrapheneOS ships Vanadium as prebuilt, already-signed APKs that the release
 pipeline does not re-sign. If the shell is ever expected to enforce trust in the
 browser component itself, that signature is not ours yet.
 
-**14.3 CONFLICT — the §"Applicability" container decision.** This spec states the
-Android client is a **thin Kotlin WebView app, not a kiosk browser** (container
-decision 2026-09-04, also recorded in `docs/ANDROID.md`). The Phase 1–3 work went
-the other way: a GrapheneOS-derived OS, built and signed by the project, flashed
-as the device's own system image, with the WebView/browser as the shell rather
-than a container app *inside* stock GrapheneOS. These are different architectures,
-not different emphases. **This needs a Captain decision** — either the 2026-09-04
-container decision is superseded by the Phase 1–3 direction, or the build
-direction has drifted from an approved decision. Until it is resolved, this spec's
-applicability note and `docs/ANDROID.md` describe the superseded path.
+**14.3 RESOLVED — the §"Applicability" container decision is PoC-era.**
+Captain JAQ, 2026-09-25: *"most of the codebase that exists in the repo now were
+PoC and testing, it only got us so far. `PHOSPHOR-VISION.md` is the GOAL and
+should be treated as the source of truth."* The 2026-09-04 container decision
+("thin Kotlin WebView app, not a kiosk browser") and this spec's applicability
+note describe the proof-of-concept path. **`docs/PHOSPHOR-VISION.md` governs**: an
+agent-native phone OS with Phosphor as the primary system shell, built as a
+GrapheneOS-derived image — the direction Phases 1–3 began. Everything in this spec
+that is front-end-agnostic (quarantine, gating, redaction, secret hygiene) carries
+forward unchanged and lives in the shared agent core; only the container
+assumption is superseded.
 
-**14.4 CONFLICT — the base OS.** `PHOS-SPEC-002` targets postmarketOS or
-Debian-for-Pixel on a mainline kernel, keeping GrapheneOS as a "daily-driver
-fallback" (§7 there). Phase 1–3 built on GrapheneOS itself. Both can hold only if
-the AOSP-derived image is an interim step toward a mainline base, or if SPEC-002's
-base-OS direction is revised. Also needs the Captain.
+**14.4 RESOLVED — the base OS is GrapheneOS-derived, not mainline.**
+`PHOS-SPEC-002` proposed postmarketOS or Debian-for-Pixel on a mainline kernel.
+The vision specifies a **GrapheneOS-derived operating system** (its §Target
+foundation and §5 "GrapheneOS foundation"), and Phases 1–3 built on GrapheneOS
+itself. SPEC-002's staging model (L4→L1) remains useful as a description of how far
+Phosphor's ownership of the OS should eventually reach; its base-OS choice is
+superseded.
 
 **14.5 Naming collision.** `D4` in `PHASE-3-KEY-MANAGEMENT-DESIGN.md` §8 means
 "do not relock the bootloader". `D4` in this spec's §7.2 is an unrelated
