@@ -347,4 +347,58 @@ Each requirement verified as follows (evidence recorded in this repo):
 - OWASP: prompt-injection category (contextual background)
 
 ---
+
+## 14. Device-trust addendum (2026-09-25) — facts, not decisions
+
+*Nothing in this addendum overrides an approved decision or changes a requirement.
+It records what became true on 2026-09-25 during the Phosphor device work, and
+flags two conflicts for the Captain.*
+
+**14.1 The device's trust baseline changed.** The Pixel 8a that this spec's
+Android client was to run on is now a **development device with an unlocked
+bootloader**, running a project-built GrapheneOS-derived image rather than stock
+GrapheneOS. Measured on-device: `ro.boot.flash.locked=0`,
+`ro.boot.verifiedbootstate=orange`, build
+`google/akita/akita:17/CP2A.260805.005/2026092500:user/release-keys`. Our own AVB
+public key is in the device's `avb_custom_key` partition, and the running `vbmeta`
+is proven to be ours — the bootloader's `ro.boot.vbmeta.digest` equals `sha256()`
+of the first `ro.boot.vbmeta.size` bytes of the flashed `vbmeta.img`.
+
+Consequence for §4.3, which places physical device compromise out of scope: that
+remains a reasonable carve-out for the *app-layer* threat model this spec governs,
+but the device's attestable identity is no longer a given. An unlocked bootloader
+boots images that fail verification, so on this unit the OS is not cryptographically
+pinned from the device's own perspective — only the good faith of whoever holds
+the cable.
+
+**14.2 The browser is GrapheneOS's, not ours.** On a project-built image,
+`app.vanadium.browser` and `app.vanadium.webview` carry GrapheneOS's signature
+(DN `CN=GrapheneOS`, digest
+`c6adb8b83c6d4c17d292afde56fd488a51d316ff8f2c11c5410223bff8a7dbb3`), because
+GrapheneOS ships Vanadium as prebuilt, already-signed APKs that the release
+pipeline does not re-sign. If the shell is ever expected to enforce trust in the
+browser component itself, that signature is not ours yet.
+
+**14.3 CONFLICT — the §"Applicability" container decision.** This spec states the
+Android client is a **thin Kotlin WebView app, not a kiosk browser** (container
+decision 2026-09-04, also recorded in `docs/ANDROID.md`). The Phase 1–3 work went
+the other way: a GrapheneOS-derived OS, built and signed by the project, flashed
+as the device's own system image, with the WebView/browser as the shell rather
+than a container app *inside* stock GrapheneOS. These are different architectures,
+not different emphases. **This needs a Captain decision** — either the 2026-09-04
+container decision is superseded by the Phase 1–3 direction, or the build
+direction has drifted from an approved decision. Until it is resolved, this spec's
+applicability note and `docs/ANDROID.md` describe the superseded path.
+
+**14.4 CONFLICT — the base OS.** `PHOS-SPEC-002` targets postmarketOS or
+Debian-for-Pixel on a mainline kernel, keeping GrapheneOS as a "daily-driver
+fallback" (§7 there). Phase 1–3 built on GrapheneOS itself. Both can hold only if
+the AOSP-derived image is an interim step toward a mainline base, or if SPEC-002's
+base-OS direction is revised. Also needs the Captain.
+
+**14.5 Naming collision.** `D4` in `PHASE-3-KEY-MANAGEMENT-DESIGN.md` §8 means
+"do not relock the bootloader". `D4` in this spec's §7.2 is an unrelated
+command-risk pattern. Same label, different subjects.
+
+---
 *End of PHOS-SPEC-001.*

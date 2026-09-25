@@ -311,11 +311,31 @@ but it requires flashing a build signed with keys the device will accept and
 then relocking — and unlocking again in future would wipe the device. The
 practical consequence is that D4 is cheap to keep and expensive to reverse.
 
+*Mechanism, established 2026-09-25 (Phase 3 flash):* "keys the device will
+accept" is now concrete rather than hand-waving. `flash-all.sh` runs
+`fastboot erase avb_custom_key` followed by `fastboot flash avb_custom_key
+avb_pkmd.bin` (lines 92–93 of the installed script), so our AVB public key is
+installed into the device's custom-key partition on every flash. `avb_custom_key`
+is exactly the slot a Pixel uses to verify against a non-Google key, which makes
+verified boot under OUR key look achievable by relocking — without anything new
+having to be built. What keeps it from being a casual step is unchanged: it costs
+another wipe, and a non-booting build plus a locked bootloader equals a brick,
+recoverable only by unlocking again (which wipes). Treat it as a deliberate step
+for the Phase 15 revisit below, not a convenience.
+
 **Worth noting for later phases:** this posture is in tension with
 `PHOS-SPEC-001`'s trust architecture, which is concerned with what the OS can be
 made to trust. It is defensible during development and should be revisited
 before any Phase 15 pilot deployment, where a locked device with our keys
-enrolled would be the appropriate target state.
+enrolled would be the appropriate target state. As of 2026-09-25 the posture is
+*realised* rather than theoretical: the flashed device reports
+`ro.boot.verifiedbootstate=orange` and `ro.boot.flash.locked=0`, i.e. verified
+boot is not enforced on it.
+
+**Naming caution:** the label `D4` in this document means "do not relock the
+bootloader". In `PHOS-SPEC-001` §7.2, `D4` is an unrelated command-risk pattern
+(`chmod`/`chown` on system paths). Same label, different subjects — read the
+containing document.
 
 ---
 

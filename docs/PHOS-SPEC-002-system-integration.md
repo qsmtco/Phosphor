@@ -86,6 +86,21 @@ Not a separate phase: it is L1/L2 with the UX fully realized.
 - **REC-5 (SHOULD):** Quarantine scanning applies to ALL system feedback
   the agent consumes (logs, statuses) — system output is untrusted input.
 
+*Status 2026-09-25, measured on the device:* **REC-1 is partially realised.**
+`docs/PHASE-3-FLASHING-AND-RECOVERY.md` documents a fastboot recovery ladder whose
+rung 2 (re-flash) was tested and works, and it qualifies as out-of-band in the
+sense REC-1 requires — it needs a host and a cable, not a healthy on-device
+Phosphor. The caveat is serious and recorded in that document: `flash-all.sh`
+erases `userdata` and `metadata`, so recovery restores the **device**, not the
+**data**. A recovery path that silently destroys the user's state is not yet the
+out-of-band recovery this requirement is really asking for; the gap is backup,
+not bootability. **REC-2 has no equivalent yet** — there is no safe-mode boot
+that skips the agent.
+
+Note also that this section's recovery requirements are what make the
+unlocked-bootloader posture acceptable during development: with the bootloader
+open, recovery does not depend on our keys being trusted.
+
 ## 6. Non-goals
 
 - LLM in the kernel. Never.
@@ -120,7 +135,16 @@ Not a separate phase: it is L1/L2 with the UX fully realized.
   (8a/akita included). GPLv2. Buildable; GOS ships kernels built from it.
 - GrapheneOS AOSP hardening tree — hardened malloc, SELinux policies,
   bionic/framework patches. Apache-2.0/BSD.
-- Vanadium — BSD-3-Clause hardened Chromium.
+- Vanadium — BSD-3-Clause hardened Chromium. **Forkable, but not currently
+  forked** (established 2026-09-25): GrapheneOS ships Vanadium as *prebuilt,
+  already-signed* APKs in `platform_external_vanadium`, and
+  `generate-release.sh` re-signs AOSP and APEX components to our keys but not
+  those. On a project-built image the on-device `app.vanadium.browser` and
+  `app.vanadium.webview` therefore report certificate DN `CN=GrapheneOS` and
+  digest `c6adb8b83c6d4c17d292afde56fd488a51d316ff8f2c11c5410223bff8a7dbb3` —
+  not our platform certificate. The source is permissive, so this is a build
+  decision rather than a licensing one; owning that signature means building
+  Chromium.
 - Apps/infrastructure — MIT.
 
 **Firmware reality (closed, permanent):** modem firmware, GPU firmware,

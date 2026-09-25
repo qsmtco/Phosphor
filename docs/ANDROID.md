@@ -5,6 +5,25 @@
 `PHOSPHOR_SPEC.md`. The trust architecture (`docs/PHOS-SPEC-001`) is
 implemented and audited in the shared agent core and applies to any client.
 
+---
+
+> **STATUS NOTE — 2026-09-25 — a conflict that needs the Captain.**
+> This document's *container decision* (2026-09-04, below) is "thin Android
+> WebView app, **NOT** a kiosk Vanadium tab" — an app running **inside stock
+> GrapheneOS**. Phases 1–3 did something materially different: the project built
+> a **GrapheneOS-derived OS from source, signed it with its own keys, unlocked
+> the bootloader, and flashed it** as the device's own system image — see
+> `docs/PHASE-3-FLASHING-AND-RECOVERY.md` and
+> `docs/PHASE-3-KEY-MANAGEMENT-DESIGN.md`.
+>
+> Those are different architectures, not different emphases. Either the container
+> decision is superseded by the Phase 1–3 direction, or the build direction has
+> drifted from an approved decision. This is flagged rather than resolved
+> because it is a Captain call. Until it is settled, treat the container decision
+> and the 10-step path below as describing the **superseded** path — in
+> particular, steps 1 and 7 assume stock GrapheneOS plus a home-app WebView, not
+> a project-built system image.
+
 ## Already done (from the iOS PoC — inherits directly)
 
 - Voice loop: mic → STT → LLM → HTML on screen (proven at ~1s latency)
