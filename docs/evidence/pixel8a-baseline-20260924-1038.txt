@@ -1,0 +1,84 @@
+# Pixel 8a no-change baseline (captured before any modification)
+# host: qoder | captured: 2026-09-24T10:38:20-07:00 | via: adb fastboot version 37.0.1-15733141
+# USB: 18d1:4ee7 (charging + debug), transport usb:5-2
+
+## Identity
+ro.product.model                 Pixel 8a
+ro.product.brand                 google
+ro.product.name                  akita
+ro.product.device                akita
+ro.product.manufacturer          Google
+ro.build.fingerprint             google/akita/akita:17/CP2A.260805.005/2026091901:user/release-keys
+ro.build.id                      CP2A.260805.005
+ro.build.version.release         17
+ro.build.version.security_patch  2026-09-01
+ro.boot.hardware.sku             GKV4X
+ro.boot.product.hardware.sku     GKV4X
+ro.boot.hardware                 akita
+ro.boot.hardware.variant         
+ro.boot.carrier                  
+ro.boot.slot_suffix              _a
+ro.boot.radio                    
+ro.boot.bootloader               akita-17.0-15199481
+ro.boot.hardware.platform        zuma
+
+## Boot / verified boot / unlock state
+ro.boot.verifiedbootstate        yellow
+ro.boot.veritymode               enforcing
+ro.boot.flash.locked             1
+ro.oem_unlock_supported          
+sys.oem_unlock_allowed           
+ro.boot.vbmeta.device_state      locked
+ro.secure                        1
+ro.debuggable                    0
+ro.build.type                    user
+ro.build.tags                    release-keys
+
+## Carrier / SIM (Verizon check)
+gsm.sim.operator.alpha           ,
+gsm.sim.operator.numeric         ,
+gsm.operator.alpha               ,
+ro.carrier                       unknown
+ro.boot.carrier                  
+
+## Any verizon/modem strings in the property set
+
+## Bootloader version reported by the device
+akita-17.0-15199481
+
+## adb view
+List of devices attached
+3C121JEKB03922         device usb:5-2 product:akita model:Pixel_8a device:akita transport_id:1
+
+
+## GrapheneOS confirmation (added 2026-09-24, same session)
+ro.build.description            akita-user 17 CP2A.260805.005 2026091901 release-keys
+ro.build.version.incremental    2026091901
+ro.build.host                   r-0123456789abcdef-0123
+ro.build.date                   Sat Sep 19 05:01:43 UTC 2026
+-- GrapheneOS / Vanadium packages --
+package:android.overlay.akita.grapheneos
+package:android.overlay.grapheneos
+package:app.grapheneos.AppCompatConfig
+package:app.grapheneos.apps
+package:app.grapheneos.backup.contacts
+package:app.grapheneos.camera
+package:app.grapheneos.carrierconfig2
+package:app.grapheneos.gmscompat
+package:app.grapheneos.gmscompat.config
+package:app.grapheneos.gmscompat.lib
+package:app.grapheneos.info
+package:app.grapheneos.logviewer
+package:app.grapheneos.networklocation
+package:app.grapheneos.pdfviewer
+package:app.grapheneos.setupwizard
+package:app.grapheneos.speechservices
+package:app.vanadium.browser
+package:app.vanadium.config
+package:app.vanadium.webview
+package:com.android.phone.overlay.grapheneos
+package:com.android.providers.telephony.overlay.grapheneos
+-- GMS / Play package count (0 = de-Googled) --
+0
+-- uptime --
+ 10:39:39 up 2 days,  8:42,  0 users,  load average: 0.61, 0.67, 0.73
