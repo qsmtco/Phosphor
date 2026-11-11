@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "auto_accept": {
+    "file_changes": {
+      "diff": {
+        "enabled": true,
+        "agent_scope": "all_agents"
+      },
+      "file_created": {
+        "enabled": false,
+        "agent_scope": "all_agents"
+      },
+      "file_modified": {
+        "enabled": false,
+        "agent_scope": "all_agents"
+      },
+      "file_deleted": {
+        "enabled": false,
+        "agent_scope": "all_agents"
+      }
+    },
+    "exec_command": {
+      "mode": "show",
+      "agent_scope": "all_agents"
+    },
+    "snoozed_card_ids": []
+  }
+}

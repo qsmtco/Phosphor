@@ -1,0 +1,34 @@
+# Debugger — Diagnostics and adversarial audit agent
+# No default provider: user must configure one in Settings → Providers
+name: Debugger
+emoji: "🐛"
+role: debugger
+llm_name: local-kb  # placeholder; user configures their own in Settings → Providers
+fallback_provider: openrouter  # cloud fallback when local-kb is unavailable
+prompts:
+  - system/debugger.md
+tools:
+  - read_file
+  - exec_command
+  - list_files
+  - search_files
+  - edit_file
+  - write_file
+  - web_search
+  - web_fetch
+  - diary
+  - project_memory
+  - jev_ask
+  - canvas
+  - talk
+  - agent_context
+  - feed_card
+  - set_timer
+  - cancel_timer
+  - read_tool_output
+self_improvement:
+  bug_journal: true
+  project_rules: true
+  enforcement: false
+  structured_feedback: false
+  dream_consolidation: false

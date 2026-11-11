@@ -42,3 +42,5 @@ phosphor-module/
 # Runtime exceptions: these MUST ship (fail-closed needs the patterns file)
 !runtime/command_risk_patterns.json
 !runtime/.env.example
+.crabcakes/feed-updates.jsonl
+.crabcakes/feed.json

@@ -1,0 +1,36 @@
+{
+  "project_name": "Phosphor",
+  "project_path": "/home/cptjaqx/projects/Phosphor",
+  "opened_at": "2026-11-10T10:31:47-0800",
+  "git": {
+    "available": true,
+    "branch": "main",
+    "head_sha": "842da7a06c830897c4a4e9d73ab262e856241321",
+    "recent_commits": [
+      {
+        "sha": "842da7a",
+        "message": "docs: add PROJECT-STATUS.md \u2014 where the project stands as of 2026-09-25"
+      },
+      {
+        "sha": "a1dc69a",
+        "message": "docs: mark PoC-era architecture decisions superseded by PHOSPHOR-VISION.md"
+      },
+      {
+        "sha": "df0ebc1",
+        "message": "docs: align the Phase 3 findings with the trust and system specs"
+      },
+      {
+        "sha": "bc031bb",
+        "message": "scripts: add host setup and key-custody tooling for Phase 1-3"
+      },
+      {
+        "sha": "291bae6",
+        "message": "docs: record Phase 1-3 \u2014 host readiness, source/build foundation, key management, flashing and recovery"
+      }
+    ],
+    "dirty": true
+  },
+  "team_size": 3,
+  "review_mode": "off",
+  "tech_stack": []
+}

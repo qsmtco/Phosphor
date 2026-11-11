@@ -1,0 +1,26 @@
+{
+  "members": [
+    {
+      "session_key": "agent:coder",
+      "name": "Coder",
+      "role": "coder",
+      "can_write": true
+    },
+    {
+      "session_key": "agent:debugger",
+      "name": "Debugger",
+      "role": "debugger",
+      "can_write": true
+    },
+    {
+      "session_key": "agent:supervisor",
+      "name": "Supervisor",
+      "role": "supervisor",
+      "can_write": true
+    }
+  ],
+  "pm": {
+    "name": "",
+    "id": ""
+  }
+}

@@ -1,0 +1,128 @@
+[line 1 of docs/P4-ARCH-AUDIT.md]
+1|# P4 Architecture Audit — `docs/PHASE-4-PLATFORM-ARCHITECTURE.md`
+2|
+3|**Verdict: FIX FIRST**
+4|**Auditor:** Debugger (develcakes), 2026-11-10, at Supervisor's Phase 4 acceptance gate
+5|**Artifact audited:** `docs/PHASE-4-PLATFORM-ARCHITECTURE.md` (34428 bytes, 271 lines, untracked, author Coder)
+6|**Authority chain used:** `docs/PHOSPHOR-VISION.md` (wins on conflict) → `docs/PHOS-SPEC-001-trust-architecture.md` → `docs/PHOS-SPEC-002-system-integration.md` (base-OS choice superseded by SPEC-001 §14.4 / PM ruling 2026-11-10; L0–L4 + REC-1..5 staging model carries) → `docs/PHOSPHOR-BUILD-PLAN.md` §Phase 4 → `docs/PROJECT-STATUS.md` §2, §10, §14.
+7|
+8|**Scope of this audit:** design document only. No code, build, or device operation was performed or is implied (verified: audited doc §"Scope" line 8, closing line 271; `git status` shows only the new untracked doc — no source or device artifacts touched).
+9|
+10|**Method note (material to how findings were graded):** `web_search` is unavailable on `qoder` (`BRAVE_API_KEY` unset), so every Android API and permission claim below was verified **against the actual source tree** at `~/projects/grapheneos-2026091900` rather than from memory. File:line citations in the findings refer to that tree unless stated otherwise. Claims I could not settle in-tree are labelled `[UNVERIFIED]` and were not graded as defects.
+11|
+12|---
+13|
+14|## Verdict rationale
+15|
+16|**FIX FIRST**, not ACCEPT and not REJECT.
+17|
+18|- **Not ACCEPT:** one SPEC-002 MUST (REC-2) is answered with a mechanism that provably does not work (BLOCKER-1); the capability broker's privilege map contains an invented API, two wrong protection levels, two omitted signature permissions, and one undefined risk class; and the classifier — the security core of the whole design — is described in three mutually inconsistent places. A capability inventory with wrong privilege levels is not "understood well enough to begin native platform work without guessing" (BUILD-PLAN Phase 4 exit criterion line 261).
+19|- **Not REJECT:** the architecture *shape* is correct and vision-aligned. Shell-as-system-HOME-app, three-process trust split with an unprivileged brain and a privileged broker, native approval card outside page scope, and init-supervised agentd all follow the vision and SPEC-001 without redirecting into an app/chatbot/browser-shell shape. The defects are in the detail layer and are all repairable in place.
+20|
+21|Counts: **1 BLOCKER, 11 MAJOR, 8 MINOR, 6 NOTE.**
+22|
+23|---
+24|
+25|## BLOCKER
+26|
+27|### BLOCKER-1 — REC-2 (safe mode) is answered with a mechanism that cannot satisfy it, on two independent grounds
+28|**Audited doc:** §6.5 line 172; §7 line 184; §8 map line 223; §1.2 line 49.
+29|**Violates:** SPEC-002 §5 REC-2 (MUST): *"Safe-mode boot path — a boot option that starts a plain shell + minimal network, skipping the agent, reachable without the agent's cooperation."* No marked decision drops it; line 172 claims to satisfy it.
+30|
+31|The doc's answer is: *"the fallback launcher serves as the skip-the-agent surface — a boot into stock launcher + Settings without PhosphorShell default is achievable via safe boot (or `pm disable` over adb in dev). The requirement 'reachable without the agent's cooperation' is satisfied because disabling the HOME default never requires the agent to be healthy."*
+32|
+33|This fails twice, verifiably:
+34|
+35|1. **Android safe mode cannot stop `phosphor-agentd` at all.** Safe mode is a *PackageManager* concept — it gates APK components. The audited doc's own §2.1 (line 65) defines agentd as *"native daemon, declared in the device tree, started by `init` from a `.rc`"*, and §8 (line 197) draws it as `init ─▶ phosphor-agentd`. An init-supervised native binary has no package and no component; `PackageManagerService`'s safe-mode flag never sees it. Safe boot therefore does not skip the agent — the specific thing REC-2 demands.
+36|2. **Safe mode does not disable system-image apps, which PhosphorShell must be.** `ComputerEngine.java:3684`:
+37|   ```java
+38|   if (safeMode && !ps.isSystem()) {
+39|       return PackageManagerService.PACKAGE_STARTABILITY_NOT_SYSTEM;
+40|   }
+41|   ```
+42|   and `PackageSetting.java:845-846`:
+43|   ```java
+44|   public boolean isSystem() {
+45|       return (getFlags() & ApplicationInfo.FLAG_SYSTEM) != 0;
+46|   }
+47|   ```
+48|   Safe mode disables only *non-system* apps. §1 line 27 and §1.1 line 33 require PhosphorShell to be a *"platform-signed, launcher-category system app"* inside the system image — i.e. `FLAG_SYSTEM` set. So PhosphorShell remains startable **and remains the resolved HOME** in safe mode. The stated fallback ("boot into stock launcher … without PhosphorShell default") does not occur: both are system apps, and the HOME role/default is unaffected by safe mode.
+49|
+50|**Consequence:** a MUST-level recovery requirement has no working mechanism, and the doc presents it as satisfied. The "OS vs demo" line SPEC-002 §5 draws is exactly this requirement. `pm disable … over adb` (also offered, line 172) depends on a working adb host connection and a booted, cooperative device — it is *not* a boot option, and it is not "reachable without the agent's cooperation" in the boot-path sense REC-2 asks for.
+51|
+52|**Fix direction (not prescriptive — architecture choice belongs to the Supervisor/Captain):** the answer must be a real boot-time switch that (a) prevents the HOME/default resolution pointing at PhosphorShell, and (b) prevents agentd from being started or held down — e.g. an `init` property/`androidboot.*` or kernel-cmdline-derived property consumed by agentd's `.rc` (`disabled` + `start` conditioned on a property) plus a distinct HOME-role holder selected by a build-time `overlay`/role-defaults entry, or a second explicitly-chosen launcher as default-on-safe-boot. Whatever the choice, REC-2 must be marked with its own `[ADAPTED FROM SPEC-002 REC-2]` line stating the mechanism *and* its residual gap, as REC-1's line 172 already honestly does for the backup gap.
+53|
+54|---
+55|
+56|## MAJOR
+57|
+58|### MAJOR-1 — The risk classifier is specified three incompatible ways; R-GATE-4's "single deterministic classifier" is lost
+59|**Audited doc:** §2.1 line 65, §4 line 124, §6.3 line 158, §8 map line 219.
+60|**Violates:** SPEC-001 R-GATE-4 (MUST: classification uses a deterministic pattern list evaluated in code, not model judgment) and §7.1 (two classes).
+61|
+62|- §2.1 line 65: agentd holds *"**quarantine**, **gating**, **redaction**"*.
+63|- §4 line 124: *"classification and approval live in the broker"*.
+64|- §6.3 line 158: *"ported to agentd/broker as the single classifier"* — a single classifier in two processes is not a single classifier.
+65|- §8 line 219: agentd → broker tool calls are *"gated by broker-side re-classify"* — implying agentd classified once and the broker classifies again.
+66|
+67|Two classifiers with independent policy files diverge, and under a fail-closed design the *weaker* instance wins the race to execute. R-GATE-4 is never cited in the document (see MAJOR-2). The doc must name exactly one authoritative classifier location, state whether the other path is a defence-in-depth re-check against a *shared* pattern artifact (and how shared — a single read-only file both domains can read, version-pinned), and make the fail-closed order explicit for the case where the two disagree.
+68|
+69|### MAJOR-2 — Silent gaps: R-GATE-1 and R-GATE-4 never appear; R-SEC-3 has no Android location
+70|**Audited doc:** §4 table lines 115-122, §3 line 90, §6.3 line 158.
+71|**Violates:** audit criterion 1 — every SPEC-001 MUST must have a concrete implementation location *or* be explicitly marked unplaced.
+72|
+73|Verified by enumeration (`grep -o "R-GATE-[0-9]"`): the document cites **R-GATE-2, 3, 5, 6, 7, 8** and never **R-GATE-1** (MUST: every tool invocation classified before execution) or **R-GATE-4** (MUST: deterministic, in-code pattern list). Both MUSTs are arguably satisfied in intent by §6.3/§5 step 4 — but "arguably" is what the exit criterion forbids, and R-GATE-4 is precisely the requirement MAJOR-1 shows being violated. Neither is in the silent-gap list.
+74|
+75|**R-SEC-3** (MUST) is worse: line 117 restates it as *"`.env`-class reads gated"*. `R-SEC-3`'s actual content is a defined path set — `{server .env, .env.*, *.pem, *.p12, *.p8, *.key, id_rsa*, .git-credentials}` classified DESTRUCTIVE-READ by §7.2/D12. **There is no `.env` on an Android device**, and the doc never enumerates the Android equivalent (Keystore blobs under `/data/misc/keystore`, the OQ-2 provider-credential file, `avb.pem`-class material if ever staged, the agentd private dir). The single most secret-bearing requirement in SPEC-001 is mapped to a filename that will not exist. It needs its own translation with the actual Android secret path set.
+76|
+77|### MAJOR-3 — `SmsManager.sendMessage` does not exist (invented API)
+78|**Audited doc:** §3 line 90 (`sms.send` → *"`SmsManager.sendMessage`"*).
+79|**Violates:** audit criterion 4.
+80|
+81|Verified in `frameworks/base/telephony/java/android/telephony/SmsManager.java`: the class exposes `sendTextMessage` (lines 613, 635, 748), `sendMultipartTextMessage` (1218, 1237, 1267, 1503), and `sendTextMessageWithoutPersisting` (850). There is **no `sendMessage`**. The real method also now requires a `persistMessage`/`PendingIntent`-style signature (`sendTextMessage` is `@Deprecated` in favour of the multi-arg form in recent AOSP), so the inventory should cite the current signature, not a remembered one.
+82|
+83|### MAJOR-4 — SMS and contacts privilege levels are wrong; the actual gate (`hardRestricted`) is missed
+84|**Audited doc:** §3 line 90 (*"`READ_SMS` (signature-permission per AOSP policy)"*), line 90 privilege column (*"signature → broker"*).
+85|**Violates:** audit criterion 4 (wrong privilege level), and it makes the design's central claim — "broker holds the permissions, agentd holds none" — under-specified as to *how* the broker gets them.
+86|
+87|Verified in `frameworks/base/core/res/AndroidManifest.xml`:
+88|- `READ_SMS` (line 1072-1077): `protectionLevel="dangerous"`, `permissionFlags="hardRestricted|allowedInPrivateComputeCore"`.
+89|- `SEND_SMS` (line 1044-1049): `protectionLevel="dangerous"`, `permissionFlags="costsMoney|hardRestricted"`.
+90|- `READ_CONTACTS` (line 907-912): `protectionLevel="dangerous"`. (The doc is right that this is runtime; it is wrong to imply the SMS family is signature.)
+91|
+92|`READ_SMS`/`SEND_SMS` are **not** signature permissions — they are `dangerous` **and** `hardRestricted`. `hardRestricted` is the real constraint: such a permission cannot be granted unless the app is on a hard-restricted allowlist (`Permission.isHardRestricted()`, `Permission.java:234-235`; `PermissionManagerServiceImpl` consults it at install/grant time). This is a *build-system deliverable* — a privapp-permissions / role-defaults / allowlist entry — and the design needs to say where it lives, because it is the difference between the broker working and `sendSms` silently failing at runtime. The doc's privilege column should read `dangerous | hardRestricted → broker, requires allowlist entry in our tree`.
+93|
+94|### MAJOR-5 — Telephony privilege claims are wrong in both directions, and `tel.status`'s permission is missing
+95|**Audited doc:** §3 line 89 (*"answering/hanging up needs `MODIFY_PHONE_STATE` (signature) or Telecom `ConnectionService` participation"*; privilege column *"signature | privileged → **broker only**"*).
+96|**Violates:** audit criterion 4.
+97|
+98|Verified in `frameworks/base/telecomm/framework/java/android/telecom/TelecomManager.java` and `AndroidManifest.xml`:
+99|- `placeCall()` (line 2748-2750): `@RequiresPermission(anyOf = {CALL_PHONE, …})`; `CALL_PHONE` is **`dangerous`** with `costsMoney` (`AndroidManifest.xml:1667-1672`). Not signature.
+100|- `acceptRingingCall()` (2321-2324): `@RequiresPermission(anyOf = {ANSWER_PHONE_CALLS, MODIFY_PHONE_STATE})`; `ANSWER_PHONE_CALLS` is **`dangerous|runtime`** (`AndroidManifest.xml:1695-1699`). The doc omits it entirely and names only `MODIFY_PHONE_STATE`.
+101|- `endCall()` (2293-2294): `@RequiresPermission(ANSWER_PHONE_CALLS)` **only** — `MODIFY_PHONE_STATE` will not do. Also `@Deprecated`, and it will not end emergency or (without privileged caller) self-managed/transactional calls (javadoc 2274-2290) — a real behavioural constraint for an agent that says "hang up".
+102|- `getCallState()` (`tel.status`) (2235-2237): `@RequiresPermission(anyOf = {READ_PRIVILEGED_PHONE_STATE, READ_PHONE_STATE})`, `@SystemApi`, `@hide`. The doc lists `tel.status` with no privilege note at all.
+103|
+104|Net effect: the row claims a *higher* minimum privilege than reality for dial/answer (`dangerous` suffices) while *understating* what `tel.status` needs, and it never notes that `endCall()` is deprecated and conditionally refuses. The privilege map is the artifact Phase 5 will build the manifest and sepolicy from; wrong here means wrong everywhere downstream.
+105|
+106|**Corroborated in §8:** the process map's broker line (line 212) lists the broker's held permissions as *"MODIFY_PHONE_STATE, READ_SMS/SEND_SMS, READ_CONTACTS, FINE_LOCATION, CAMERA, WRITE_SECURE_SETTINGS, notification-listener binding"* — `CALL_PHONE`, `ANSWER_PHONE_CALLS` and `READ_PHONE_STATE` are absent from the map too. The error is not a single table cell; it propagates into the process map that Phase 5 will implement from.
+107|
+108|### MAJOR-6 — Settings row: wrong permission for brightness, missing `DEVICE_POWER`, and a self-contradiction on classification
+109|**Audited doc:** §3 line 93 (*"`Settings.Global/Secure/System` via `android.permission.WRITE_SECURE_SETTINGS`, `WindowManager` attrs for idle, brightness sysprop/hardware"*; consent *"brightness/idle = SAFE"*) vs §6.3 line 161 (*"system-config writes are DESTRUCTIVE until a policy file entry says otherwise"*).
+110|**Violates:** audit criterion 4 + criterion 3 (internal consistency).
+111|
+112|Verified:
+113|- `Settings.System` writes (brightness included) require **`WRITE_SETTINGS`**, `protectionLevel="signature|preinstalled|appop|pre23|role"` (`AndroidManifest.xml:5428-5431`) — **not** `WRITE_SECURE_SETTINGS`. The doc conflates `Settings.System`/`Secure`/`Global` under one permission; they are three different gates (`WRITE_SECURE_SETTINGS` is `signature|privileged|development|role|installer`, line 5809-5810, and covers Secure/Global only).
+114|- Screen idle/wake is **`PowerManager.goToSleep(long,int,int)`**, `@RequiresPermission(DEVICE_POWER)` (`PowerManager.java:1678-1681`), with `DEVICE_POWER` = `signature|role` (`AndroidManifest.xml:7723-7725`). *"`WindowManager` attrs for idle"* is not the mechanism and `DEVICE_POWER` never appears in the doc — an omitted signature permission the broker will need.
+115|- Classification contradiction: line 93 says brightness/idle are **SAFE**; line 161 says system-config writes are **DESTRUCTIVE** by default. Both cannot hold. (Brightness *is* arguably SAFE — but then line 161 needs an explicit carve-out, or the doc has quietly decided REC-4 differently in two places.)
+116|- **Corroborated in §8:** the broker's held-permission line (212) lists only `WRITE_SECURE_SETTINGS` — neither `WRITE_SETTINGS` nor `DEVICE_POWER` appears anywhere in the document, though both are required by the methods the §3 row assigns to the broker.
+117|
+118|### MAJOR-7 — Undefined risk classes used as if normative ("system-tool class", "DESTRUCTIVE-READ")
+119|**Audited doc:** §3 lines 90, 92, 93, 99; §6.3 line 161.
+120|**Violates:** SPEC-001 §7.1 (class table defines exactly SAFE and DESTRUCTIVE); SPEC-002 REC-4 (extend with SYSTEM tool classes — same fail-closed engine).
+121|
+122|Line 93 assigns toggling radios to a *"**system-tool class** (§6.3)"*. §6.3 never defines such a class — it describes new *patterns* in the existing engine. §3 also uses **DESTRUCTIVE-READ** (lines 90, 92, 99) as a class. SPEC-001 §7.1 lists only SAFE and DESTRUCTIVE; "DESTRUCTIVE-READ" appears in SPEC-001 only informally at line 190 and in §7.2/D12's rationale. So the capability inventory's consent column is populated with at least one class name that exists nowhere, and one that exists only by informal usage.
+123|
+124|This matters operationally: Phase 5's classifier JSON must have a closed enum, and an inventory built on undefined class names cannot be turned into a pattern file without re-deciding every row. §6.3 must publish the actual class enum (SAFE / DESTRUCTIVE / DESTRUCTIVE-READ / SYSTEM-tool or whatever is chosen) and §3 must use only those names.
+125|
+126|### MA
+[... truncated; line window cut after 16384 bytes; continue with line=126 ...]

