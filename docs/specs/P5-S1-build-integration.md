@@ -117,7 +117,7 @@ Both sepolicy directories ship with a `README` only in S1 (an empty directory in
 </manifest>
 ```
 
-Development variant (until the remote exists): replace `remote` with `fetch="file:///home/cptjaqx/projects/Phosphor-platform.git"` against a local bare mirror. Afterwards `repo manifest -r > .repo/manifest-pinned.xml` must be re-run so the pin file records our project at a commit hash. The Phase 2 provenance claim (`docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md` §3.4) remains valid for GrapheneOS projects; our project is provenance-recorded separately and this split must be stated in the completion note.
+Development variant (until the remote exists): replace the `remote`/`name` pair with `fetch="file:///home/cptjaqx/projects"` and `name="Phosphor-platform.git"` against a local bare mirror at `/home/cptjaqx/projects/Phosphor-platform.git`. **Erratum 4 (PM-approved 2026-11-12):** `repo` composes a project URL as `fetch + "/" + name` (verified at `.repo/repo/manifest_xml.py:232-233`), so this split is the only form that resolves to the mirror — the previous literal text (`fetch="file:///…/Phosphor-platform.git"` + `name="Phosphor-platform"`) composed to `…/Phosphor-platform.git/Phosphor-platform`, a path inside the bare repo, and `repo sync` would fail. This executed form is live in the tree (Phase 1b, audit-verified). Afterwards `repo manifest -r > .repo/manifest-pinned.xml` must be re-run so the pin file records our project at a commit hash. The Phase 2 provenance claim (`docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md` §3.4) remains valid for GrapheneOS projects; our project is provenance-recorded separately and this split must be stated in the completion note.
 
 **B7 — Stub sources.** `services/*/main.cpp` is exactly:
 
