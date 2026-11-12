@@ -1,1 +1,2 @@
 - p5-s1-phase1b-accepted — P5-S1 Phase 1b (tree integration) ACCEPTED 2026-11-12 after 4-round adversarial plan loop + post-execution audit, zero f
+- p5-s1-complete-postmortem — P5-S1 (build integration) COMPLETE 2026-11-12: all three phases (1a skeleton, 1b tree integration, 1c build) ACCEPT by a

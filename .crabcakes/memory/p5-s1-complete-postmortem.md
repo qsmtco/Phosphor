@@ -1,0 +1,6 @@
+---
+status: live
+superseded_by: 
+origin: log
+---
+P5-S1 (build integration) COMPLETE 2026-11-12: all three phases (1a skeleton, 1b tree integration, 1c build) ACCEPT by adversarial audit; post-mortem at docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md; commits d2462a7 + b063b48 (Phosphor), acba394 (Phosphor-platform). Build result: A2 verbatim recipe green (4,514 incremental steps on Sep-24 out/, 0 failures), A3 all 5 modules installed (3 binaries ~51KB each; 2 platform-cert APKs at system/priv-app — cert SHA-1 27196e38…e33dfa; product_packages count exactly 5; risk-policy.json installed), A4 zero boot behavior proven. Loop stats: 25 plan-stage bugs (1 CRITICAL, 7 HIGH), zero tree defects; dominant pattern fabricated-expectation (6 instances across author, fixer, and auditor-proposal generations) — killed by the executed-evidence rule; pgrep self-match false-RUNNING during build poll (fix: background jobs write exit files). Carry-forwards to S2: extract evidence-gate snippet library (totality/freshness/marker/DENIED patterns); commit tree-state patch series; erratum 4 (B6 dev-variant spec text) STILL awaiting PM approval. Next: S2 SELinux foundation — preflight probe, then author/audit/execute loop per implementationLoop.md.

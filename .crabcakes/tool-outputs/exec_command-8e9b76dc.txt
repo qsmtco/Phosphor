@@ -1,0 +1,140 @@
+# P5-S1 Phase 1b — Execution Plan (author round, Coder)
+
+**Phase:** 5 · **Spec ID:** P5-S1 · **Phase:** 1b (tree integration) · **Author:** Coder, 2026-11-10
+**Authority chain:** `docs/specs/P5-S1-PHASE-INSTRUCTIONS.md` (Phase 1b, lines 59-65; handoff discipline, lines 53-55) → `docs/specs/P5-S1-build-integration.md` **rev 2** (B4 line 76-82, B6 lines 111-120, A1/A5 §5) → `docs/specs/P5-S1-PREFLIGHT-PROBE.md` (BUG #1 fix, baseline dirt).
+**Status of this file:** this plan **is the fidelity authority for the Phase 1b audit** (instructions L55: "the plan file is the fidelity authority for the audit. Chat reports are not the authority"). Every command and every file content below is exact and is to be transcribed mechanically.
+**Word marker for this round:** the delegation was an author round; no `please proceed` execution marker is claimed here. Execution of this plan happens in a seat that can write outside `/home/cptjaqx/projects/Phosphor`.
+
+**Scope of Phase 1b (in):** bare mirror of the Phase-1a repo; `.repo/local_manifests/phosphor.xml`; `repo sync -n` then a project-only `repo sync`; A1 assertion; the single `device.mk` line; `adevtool generate-all -d akita`; re-pin `manifest-pinned.xml`; A5 `repo status -j24`; target-state check on `vendor/google_devices/akita`.
+**Out of scope (hard boundaries, all phases):** no device operation of any kind — no flash, wipe, reboot, `adb`, `fastboot` (A7); no build (`m`) — that is Phase 1c; no `OFFICIAL_BUILD=true`; no second third-party edit; no hand-edit of `vendor/google_devices/akita`; no `/system/app/` path anywhere (rev-2 erratum); no `init_rc`, sepolicy content, or manifest components (all Phase 1a, already fixed).
+
+---
+
+## 0. Deviations from the delegation payload, and why
+
+The delegation payload was re-sent after garbling. Three of its strings conflict with the authority chain, and one clause was truncated mid-word. This plan follows the **authority chain**, not the payload, and records each difference so the audit can check the reasoning rather than the transcription.
+
+| # | Payload said | Authority says | Plan uses | Evidence |
+|---|---|---|---|---|
+| D-1 | `git clone --bare /home/cptjaq/projects/Phosphor-platform` | `/home/cptjaqx/projects/Phosphor-platform` | `/home/cptjaqx/...` | HOME is `/home/cptjaqx` (`P5-S1-PREFLIGHT-PROBE.md:178-179`); `/home/cptjaq` does not exist. Payload typo. |
+| D-2 | `$(call inherit-product, packages/phosphor/phosphor.md)` | `$(call inherit-product, packages/phosphor/phosphor.mk)` | `.mk` | `P5-S1-build-integration.md:79` (fenced content), `:60`, `PHASE-INSTRUCTIONS.md:24`. A `.md` inherit line would abort the build: the file is a makefile fragment. Payload typo. |
+| D-3 | mirror `…/Upstream-phosphor.git` "per erratum 1" | `Phosphor-platform.git` | `Phosphor-platform.git` | `PHASE-INSTRUCTIONS.md:18` ("mirrored to `/home/cptjaqx/projects/Phosphor-platform.git`"), `:61` (Phase 1b scope), `P5-S1-build-integration.md:120` (B6 development variant), `P5-S1-PREFLIGHT-PROBE.md:190` (BUG #1 fix text). **`Upstream-phosphor` has zero occurrences anywhere in the project tree** (`search_files 'Upstream-phosphor'` → 0 matches; `'acba394'` → 0 matches). No "erratum 1" naming a `Upstream-phosphor` mirror exists in any document. Using it would point `repo sync` at a path no step creates. **Not adopted.** |
+| D-4 | "plus the co…" (truncated) | — | Read as (i) A6a provenance requirements (commit recorded; pinned-manifest delta; GrapheneOS signed-tag verification unaffected; regeneration-from-config statement) and (ii) the `vendor/google_devices/akita` target-state check spelled out in the same payload sentence | `P5-S1-build-integration.md:177` (A6), `:63` (Phase-1b evidence: "Stop and report if `vendor/google_devices/akita` shows the line hand-edited"), `:188` |
+
+### D-5 — Manifest URL composition (a real defect in B6's development variant, resolved here)
+
+`repo` composes a project's URL as **`<remote fetch>` + `/` + `<project name>`**. B6's own primary form proves the rule: `fetch="ssh://git@github.com/qsmtco"` + `name="Phosphor-platform"` resolves to `ssh://git@github.com/qsmtco/Phosphor-platform`, which is the GitHub repository path. The development variant as literally written — `fetch="file:///home/cptjaqx/projects/Phosphor-platform.git"` + `name="Phosphor-platform"` — therefore resolves to `file:///home/cptjaqx/projects/Phosphor-platform.git/Phosphor-platform`, i.e. **inside** the bare repo, which is not a git repository. `repo sync` would fail with a path that names neither the spec nor the cause (exactly the BUG #1 failure shape, one layer deeper).
+
+The fix below changes **only strings in a file this plan authors** (the local manifest), keeps the bare mirror at its literal, spec-mandated path, and keeps `path="packages/phosphor"` and `revision="refs/heads/main"` byte-identical to B6. It is flagged for a spec erratum (see "Related issues", R-1); the alternative (nested bare repo at `Phosphor-platform.git/Phosphor-platform`, keeping both manifest strings literal) is R-2 and is **not** executed.
+
+Step S3.2 is a cheap, deterministic test of this deduction that runs before any sync. If the test contradicts the deduction, S3.2 says proceed-and-record (the manifest still resolves either way) — the manifest is never edited on the fly.
+
+---
+
+## Global execution rules (apply to every step)
+
+1. **Stop-and-report on any mismatch.** A FAILED state is a legitimate, auditable outcome. Do not improvise, do not "make it work", do not hand-edit a file the step did not name.
+2. **Paste the command and its exact output** for every step into the evidence bundle (S8 and the COMPLETENESS block). Expected strings below are the pass condition; a near-miss is a fail.
+3. Any unexpected dirt in a GrapheneOS project other than `vendor/adevtool` is an **A5 failure** → STOP.
+4. No command in this plan touches a device. This plan invokes no device tooling at all. The plan-sanity check is `grep -nE '^[[:space:]]*(adb|fastboot)[[:space:]]' docs/handoffs/P5-S1-PHASE-1b-PLAN.md` → **0 matches** (any line *beginning* with a device tool would be an executable command; prose mentions are harmless). The authoritative A7 evidence is the execution transcript itself, not a grep of this file.
+5. Single shell session for the tree steps is not required, but `cd` state is: every block below is self-contained and `cd`s explicitly.
+
+Absolute paths used throughout (no variables, to remove ambiguity):
+
+```
+TREE      = /home/cptjaqx/projects/grapheneos-2026091900
+SRCREPO   = /home/cptjaqx/projects/Phosphor-platform
+MIRROR    = /home/cptjaqx/projects/Phosphor-platform.git
+DEVICEMK  = vendor/adevtool/config/mk/google_devices/device/akita/device.mk   (relative to TREE)
+GALOG     = /home/cptjaqx/adevtool-generate-all.log
+```
+
+---
+
+## S0. Preconditions and abort gates
+
+**Purpose:** prove the Phase-1a state this phase builds on, and prove no half-applied Phase-1b state already exists. Nothing is mutated in S0.
+
+**S0.1 — the Phase-1a repo is present at the expected commit, on `main`**
+
+```bash
+git -C /home/cptjaqx/projects/Phosphor-platform rev-parse --abbrev-ref HEAD
+git -C /home/cptjaqx/projects/Phosphor-platform rev-parse HEAD
+git -C /home/cptjaqx/projects/Phosphor-platform status --porcelain
+```
+
+EXPECTED:
+```
+main
+acba394<31 more hex chars>            (40-hex total; must begin acba394)
+                                      (status --porcelain prints nothing)
+```
+
+FAILED (either): branch is not `main`; HEAD does not begin `acba394`; or `status --porcelain` is non-empty (1a artifact is not clean) → **STOP**, report which of the three and its output. Do not re-init, do not commit, do not "re-run 1a" from this phase.
+
+**S0.2 — the mirror does not already exist**
+
+```bash
+ls -d /home/cptjaqx/projects/Phosphor-platform.git 2>&1
+```
+
+EXPECTED: `ls: cannot access '/home/cptjaqx/projects/Phosphor-platform.git': No such file or directory`
+
+FAILED: the path exists → **STOP**. A bare repo already present means either a prior partial run or a wrong path; do not delete it, do not clone over it. Report `ls -la` of it and its `git --git-dir=... rev-parse HEAD`.
+
+**S0.3 — no local manifest already present**
+
+```bash
+ls -la /home/cptjaqx/projects/grapheneos-2026091900/.repo/local_manifests/ 2>&1
+grep -rn 'packages/phosphor' /home/cptjaqx/projects/grapheneos-2026091900/.repo/manifests/ 2>/dev/null | head -5
+```
+
+EXPECTED: the `ls` reports no such directory (or an empty directory); the `grep` prints nothing.
+
+FAILED: a `phosphor.xml` or any `packages/phosphor` reference already exists in the manifest set → **STOP**, report its content. Another manifest entry pointing at our path would make A1's count 2.
+
+**S0.4 — the `device.mk` seam is unmodified, and matches the preflight capture**
+
+```bash
+cd /home/cptjaqx/projects/grapheneos-2026091900
+wc -l vendor/adevtool/config/mk/google_devices/device/akita/device.mk
+grep -c 'packages/phosphor/phosphor.mk' vendor/adevtool/config/mk/google_devices/device/akita/device.mk
+git -C vendor/adevtool status --porcelain -- config/mk/google_devices/device/akita/device.mk
+cat vendor/adevtool/config/mk/google_devices/device/akita/device.mk
+```
+
+EXPECTED — `5` lines; `0` matches for our line; `git status` prints nothing (device.mk clean); content exactly:
+
+```make
+$(call inherit-product, vendor/adevtool/config/mk/google_devices/device/platform/zuma/product-common.mk)
+TARGET_KERNEL_DIR ?= $(RELEASE_KERNEL_AKITA_DIR)
+TARGET_BOARD_KERNEL_HEADERS ?= $(RELEASE_KERNEL_AKITA_DIR)/kernel-headers
+PRODUCT_PACKAGES += GosAkitaOverlay
+include vendor/adevtool/config/mk/google_devices/device/platform/zuma/device.mk
+```
+
+> The last two path segments in the preflight capture (`P5-S1-PREFLIGHT-PROBE.md:97,101`) print as `platform/zuma/...`; the operative fact for S5 is the **line count (5)**, the **0 matches** for our string, and the **clean `git status`**. If the file's *content* differs from the block above but the three checks pass, record the actual content verbatim in the evidence bundle and continue — the append in S5 is position-independent.
+
+FAILED: `grep -c` returns `1` (line already applied) → **STOP**, report; do not append twice. `git status` shows device.mk already modified → **STOP**, report the diff; that is dirt this phase did not create and A5 would be unattributable.
+
+**S0.5 — record the two baselines this phase reports deltas against**
+
+```bash
+cd /home/cptjaqx/projects/grapheneos-2026091900
+wc -l .repo/manifest-pinned.xml
+repo status -j24
+du -sh out/
+```
+
+EXPECTED:
+- `manifest-pinned.xml` line count recorded as **N** (paste the number; S7 must show N+1).
+- `repo status -j24` shows exactly the preflight baseline — one project, four entries, none of them `device.mk`:
+
+```
+project vendor/adevtool/                        (*** NO BRANCH ***)
+ --	.yarn/install-state.gz
+ --	.yarnrc.yml
+ -m	package.json
+ -m	yarn.lock
+```
+
