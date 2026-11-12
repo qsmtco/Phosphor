@@ -1,0 +1,81 @@
+677 P5-S1-PHASE-1b-PLAN.md
+# P5-S1 Phase 1b — Execution Plan (author round, Coder) — **rev 2**
+
+**Phase:** 5 · **Spec ID:** P5-S1 · **Phase:** 1b (tree integration) · **Author:** Coder, 2026-11-10
+**Revision:** **rev 2** (2026-11-11) — repairs all 11 findings of `docs/specs/P5-S1-PHASE-1b-REVISION-ORDER.md`; rev 1 is superseded. Each BUG # → change → line number is mapped in `## Revision log (rev 2)`.
+**Authority chain:** `docs/specs/P5-S1-PHASE-1b-REVISION-ORDER.md` (repair list, 11 findings) → `docs/specs/P5-S1-PHASE-INSTRUCTIONS.md` (Phase 1b, lines 59-65; handoff discipline, lines 53-55) → `docs/specs/P5-S1-build-integration.md` **rev 2** (B4 line 76-82, B6 lines 111-120, A1/A5 §5) → `docs/specs/P5-S1-PREFLIGHT-PROBE.md` (BUG #1 fix, baseline dirt). The revision order outranks every expectation string in this file; where rev 1's prose and the order disagree, the order wins and the prose has been corrected.
+**Status of this file:** this plan **is the fidelity authority for the Phase 1b audit** (instructions L55: "the plan file is the fidelity authority for the audit. Chat reports are not the authority"). Every command and every file content below is exact and is to be transcribed mechanically.
+**Word marker for this round:** the delegation carried the word marker **`please write`** (author round, rev 2 of this plan); no `please proceed` execution marker is claimed here. Execution of this plan happens in a seat that can write outside `/home/cptjaqx/projects/Phosphor`.
+
+**Scope of Phase 1b (in):** bare mirror of the Phase-1a repo; `.repo/local_manifests/phosphor.xml`; `repo sync -n` then a project-only `repo sync`; A1 assertion; the single `device.mk` line; `adevtool generate-all -d akita`; re-pin `manifest-pinned.xml`; A5 `repo status -j24`; target-state check on `vendor/google_devices/akita`.
+**Out of scope (hard boundaries, all phases):** no device operation of any kind — no flash, wipe, reboot, `adb`, `fastboot` (A7); no build (`m`) — that is Phase 1c; no `OFFICIAL_BUILD=true`; no second third-party edit; no hand-edit of `vendor/google_devices/akita`; no `/system/app/` path anywhere (rev-2 erratum); no `init_rc`, sepolicy content, or manifest components (all Phase 1a, already fixed).
+
+---
+
+## 0. Deviations from the delegation payload, and why
+
+The delegation payload was re-sent after garbling. Three of its strings conflict with the authority chain, and one clause was truncated mid-word. This plan follows the **authority chain**, not the payload, and records each difference so the audit can check the reasoning rather than the transcription.
+
+| # | Payload said | Authority says | Plan uses | Evidence |
+|---|---|---|---|---|
+| D-1 | `git clone --bare /home/cptjaq/projects/Phosphor-platform` | `/home/cptjaqx/projects/Phosphor-platform` | `/home/cptjaqx/...` | HOME is `/home/cptjaqx` (`P5-S1-PREFLIGHT-PROBE.md:178-179`); `/home/cptjaq` does not exist. Payload typo. |
+| D-2 | `$(call inherit-product, packages/phosphor/phosphor.md)` | `$(call inherit-product, packages/phosphor/phosphor.mk)` | `.mk` | `P5-S1-build-integration.md:79` (fenced content), `:60`, `PHASE-INSTRUCTIONS.md:24`. A `.md` inherit line would abort the build: the file is a makefile fragment. Payload typo. |
+| D-3 | mirror `…/Upstream-phosphor.git` "per erratum 1" | `Phosphor-platform.git` | `Phosphor-platform.git` | `PHASE-INSTRUCTIONS.md:18` ("mirrored to `/home/cptjaqx/projects/Phosphor-platform.git`"), `:61` (Phase 1b scope), `P5-S1-build-integration.md:120` (B6 development variant), `P5-S1-PREFLIGHT-PROBE.md:190` (BUG #1 fix text). **`Upstream-phosphor` has zero occurrences anywhere in the project tree** (`search_files 'Upstream-phosphor'` → 0 matches; `'acba394'` → 0 matches). No "erratum 1" naming a `Upstream-phosphor` mirror exists in any document. Using it would point `repo sync` at a path no step creates. **Not adopted.** |
+| D-4 | "plus the co…" (truncated) | — | Read as (i) A6a provenance requirements (commit recorded; pinned-manifest delta; GrapheneOS signed-tag verification unaffected; regeneration-from-config statement) and (ii) the `vendor/google_devices/akita` target-state check spelled out in the same payload sentence | `P5-S1-build-integration.md:177` (A6), `:63` (Phase-1b evidence: "Stop and report if `vendor/google_devices/akita` shows the line hand-edited"), `:188` |
+
+### D-5 — Manifest URL composition (a real defect in B6's development variant, resolved here)
+
+`repo` composes a project's URL as **`<remote fetch>` + `/` + `<project name>`**. B6's own primary form proves the rule: `fetch="ssh://git@github.com/qsmtco"` + `name="Phosphor-platform"` resolves to `ssh://git@github.com/qsmtco/Phosphor-platform`, which is the GitHub repository path. The development variant as literally written — `fetch="file:///home/cptjaqx/projects/Phosphor-platform.git"` + `name="Phosphor-platform"` — therefore resolves to `file:///home/cptjaqx/projects/Phosphor-platform.git/Phosphor-platform`, i.e. **inside** the bare repo, which is not a git repository. `repo sync` would fail with a path that names neither the spec nor the cause (exactly the BUG #1 failure shape, one layer deeper).
+
+The correction changes **only strings in a file this plan authors** (the local manifest), keeps the bare mirror at its literal, spec-mandated path, and keeps `path="packages/phosphor"` and `revision="refs/heads/main"` byte-identical to B6. **R-1 is ruled ACCEPTED by the Supervisor** (2026-11-11), with the tree's own `repo` source as the proof: `.repo/repo/manifest_xml.py:232-233` does `fetchUrl = self.resolvedFetchUrl.rstrip("/")` then `url = fetchUrl + "/" + projectName` — literal concatenation, no normalisation of a `.git` suffix. The plan's S2 form is what the pending spec erratum (erratum 4, PM approval) will adopt; this plan does not edit the spec. The alternative (nested bare repo at `Phosphor-platform.git/Phosphor-platform`, keeping both manifest strings literal) is R-2, was **rejected** by the Supervisor, and is **not** executed.
+
+The composition rule is therefore **stated, not tested**: `manifest_xml.py:232-233` is the authority. S3.2 keeps two real commands — the mirror is fetchable over `file://`, and the literal-B6 composition fails — and drops rev 1's void parent-directory enumeration (BUG #2). No step in this plan edits the manifest on the fly; if a later check contradicts the deduction, the step STOPs and reports.
+
+---
+
+## Global execution rules (apply to every step)
+
+1. **Stop-and-report on any mismatch.** A FAILED state is a legitimate, auditable outcome. Do not improvise, do not "make it work", do not hand-edit a file the step did not name.
+2. **Paste the command and its exact output** for every step into the evidence bundle (S8 and the COMPLETENESS block). Expected strings below are the pass condition; a near-miss is a fail.
+3. Any unexpected dirt in a GrapheneOS project other than `vendor/adevtool` is an **A5 failure** → STOP.
+4. No command in this plan touches a device. This plan invokes no device tooling at all. **A7's authoritative evidence is the execution transcript** — the pasted output of every command in this plan, from S0.1 to S8 — and nothing else. The plan-lint grep at the end of S8 is a check on *this document*, not on the session, and is labelled as such (BUG #9).
+5. Single shell session for the tree steps is not required, but `cd` state is: every block below is self-contained and `cd`s explicitly.
+6. **Every block runs under `bash`.** `${PIPESTATUS[0]}` is a bash array; under `sh`/`dash` the guard itself fails with `Bad substitution` and the step's exit evidence is lost exactly when it is most needed (BUG #11). A block that must be re-entered is re-entered with `bash`, never `sh`. Steps whose guard depends on this are S4.1, S4.2, S6.1, S6.2 (and S5's `tail`/`wc` checks, which read the same pipelines).
+7. **Expected output must come from an executed command, never from a rendered or line-numbered view of a file.** A `read_file`-style view shows a window of a file; `wc -l` counts it. When this plan states a line count or a byte-exact content block, the number came from `wc -l`/`sha256sum`/`stat` on the real file, and the execution round re-runs the same command before trusting it. (BUG #1: rev 1's `device.mk` was "5 lines" from a line-numbered view and the file is 8 lines.)
+8. **A `grep -c` over a directory is not evidence unless the tree is proven present and grep's own status is captured.** `grep -rn 'X' dir/ | wc -l` prints `0` when `dir/` does not exist — grep errors on stderr, `wc` prints `0` — so the likeliest failure renders as the strongest pass (BUG #8). Every such check in this plan takes the form:
+   ```bash
+   test -d <dir> || { echo 'TREE MISSING: <dir> — hard stop'; exit 1; }
+   grep -rn 'X' <dir>/ > /tmp/<name>.grep; GS=$?
+   echo "COUNT=$(wc -l < /tmp/<name>.grep) GREP_STATUS=$GS"
+   case "$GS" in 0|1) ;; *) echo "GREP_STATUS=$GS — hard stop"; exit 1;; esac
+   ```
+   `GREP_STATUS` must be `0` (matches) or `1` (no matches); **`2` is a hard stop** (grep could not read the tree — permission, race, or a vanished path).
+9. **No `git -C` on an untracked tree.** `vendor/google_devices` is not a git repository (`git -C vendor/google_devices status` → `fatal: not a git repository`) and is not a repo project (`grep -c 'path="vendor/google_devices"' .repo/manifest-pinned.xml` → 0, absent from `.repo/project.list`). Evidence for it is **content** evidence: a differential `sha256sum` inventory plus mtimes, never a git status (BUG #4).
+
+Absolute paths used throughout (no variables, to remove ambiguity):
+
+```
+TREE      = /home/cptjaqx/projects/grapheneos-2026091900
+SRCREPO   = /home/cptjaqx/projects/Phosphor-platform
+MIRROR    = /home/cptjaqx/projects/Phosphor-platform.git
+DEVICEMK  = vendor/adevtool/config/mk/google_devices/device/akita/device.mk   (relative to TREE)
+GALOG     = /home/cptjaqx/adevtool-generate-all.log
+```
+
+---
+
+## S0. Preconditions and abort gates
+
+**Purpose:** prove the Phase-1a state this phase builds on, and prove no half-applied Phase-1b state already exists. Nothing is mutated in S0.
+
+**S0.1 — the Phase-1a repo is present at the expected commit, on `main`**
+
+```bash
+git -C /home/cptjaqx/projects/Phosphor-platform rev-parse --abbrev-ref HEAD
+git -C /home/cptjaqx/projects/Phosphor-platform rev-parse HEAD
+git -C /home/cptjaqx/projects/Phosphor-platform status --porcelain
+```
+
+EXPECTED:
+```
+main
