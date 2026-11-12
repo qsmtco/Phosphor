@@ -1,6 +1,6 @@
 # P4 Architecture Audit — `docs/PHASE-4-PLATFORM-ARCHITECTURE.md`
 
-**Verdict: FIX FIRST**
+**Verdict: FIX FIRST** — *(this section audits rev 1; verdict history: rev 1 FIX FIRST, rev 2 FIX FIRST — narrow, **rev 3 ACCEPT**. See "Final narrow re-audit — rev 3" at the end of this file, which is the operative verdict.)*
 **Auditor:** Debugger (develcakes), 2026-11-10, at Supervisor's Phase 4 acceptance gate
 **Artifact audited:** `docs/PHASE-4-PLATFORM-ARCHITECTURE.md` (34428 bytes, 271 lines, untracked, author Coder)
 **Authority chain used:** `docs/PHOSPHOR-VISION.md` (wins on conflict) → `docs/PHOS-SPEC-001-trust-architecture.md` → `docs/PHOS-SPEC-002-system-integration.md` (base-OS choice superseded by SPEC-001 §14.4 / PM ruling 2026-11-10; L0–L4 + REC-1..5 staging model carries) → `docs/PHOSPHOR-BUILD-PLAN.md` §Phase 4 → `docs/PROJECT-STATUS.md` §2, §10, §14.
@@ -382,3 +382,171 @@ Re-audit scope if a rev 3 appears: §6.5 lines 279-304, §8 line 405, §4 line 1
 ---
 
 *End of re-audit (rev 2). Verdict: **FIX FIRST** — 25/26 rev-1 findings resolved, 1 BLOCKER-class item introduced (NEW-1). No file other than this audit was modified.*
+
+---
+
+# Final narrow re-audit — rev 3 (`docs/PHASE-4-PLATFORM-ARCHITECTURE.md`, 80399 bytes, 555 lines, mtime 17:00)
+
+**Verdict: ACCEPT.**
+**Auditor:** Debugger, 2026-11-10. Scope: exactly the four locations and two appendix areas I fixed as the re-audit scope for rev 3 (§6.5:279-304, §8:405, §4:151, §4.1:170, the §10.2 row, and the §11 appendix) — nothing else re-examined, nothing else re-graded.
+
+## Method note — how the rev 2→3 delta was established
+
+`git diff` is **not** a valid rev 2→3 diff here: `HEAD` (`d44fa6e`, 16:59) captured the document **mid-edit**, at rev 2 plus Coder's first six rev-3 edits. Comparing the worktree to `HEAD` understates the delta and mixes it with the commit boundary.
+
+Instead I reconstructed rev 2 exactly by replaying Coder's recorded `edit_file` calls in reverse. The feed archive (`.crabcakes/feed.json`) retains every call's `old_text`/`new_text`; 17 successful edits land after rev 2's last edit (00:48:29 UTC) and rev 3 begins at 00:54:31 UTC (one further edit errored and made no change). Reversing all 17 against the worktree reproduces a 72348-byte / 534-line rev 2, and **that reconstruction validates against my own rev-2 citations**: §4 lands on line 151 and §8's SELinux paragraph on line 405, exactly the lines I cited in the rev-2 re-audit. A reconstruction that lands my citations on the cited lines is the right rev 2.
+
+The true rev 2→3 delta is therefore **10 hunks, 13 lines removed, 37 changed lines** — and it is surgical:
+
+| Hunk (rev 3 lines) | Section | In declared scope? |
+|---|---|---|
+| 1-9 | Header: status line + rev-3 note + retained rev-2 note | Metadata, required |
+| 149-152 | **§4:151-152** — the `R-SEC-3` row | ✅ cited |
+| 169-172 | **§4.1:172** — new scope-of-the-allow-list bullet | ✅ cited |
+| 281-307 | **§6.5:284** (keygate latch), **:304** (plain-surface polarity), **:306** (residual gap) | ✅ cited |
+| 390-399 | **§8** diagram safe-boot block | ✅ §8 (block must mirror §6.5) |
+| 406-419 | **§8:409-419** SELinux requirements section | ✅ §8:405 |
+| 501-504 | **§10.2** new named debt row | ✅ cited |
+| 514-517, 545-552 | **§11** appendix intro + header + NEW-1..5 rows | ✅ cited |
+| (unchanged) | §0-§3, §5-§7, §9, §10.1 | — byte-identical |
+
+Every hunk falls inside the declared scope or is a strictly necessary consequence of it (the §8 diagram block must match §6.5 or the map drifts from the text, which was MAJOR-9's original defect). **No content drifted.** Spot-checked anchors outside scope all survive verbatim: "almost 1:1" (3×, all in withdrawal/accounting contexts), "no added trust burden" (withdrawn sentence), `config_defaultListenerAccessPackages`, `NETWORK_AIRPLANE_MODE`, `AF_UNIX`/`SO_PEERCRED` (5× each), `conditionally closed`, `sanitize_screen_html`, `STRENGTHENS R-UI-5`, the Z0-Z5 trust table. Appendix rows are 32 (27 rev-1 + 5 NEW), all with exactly 3 cells — no broken table.
+
+## NEW-1 — RESOLVED. Polarity now matches agentd's start condition on **both** halves.
+
+The Supervisor asked specifically that both halves be checked against agentd's own start condition. Verified against the `disabled` service declaration, not against the prose:
+
+- **Agent half** (§6.5:294-300, mirrored §8:351-352): `service phosphor_agentd … disabled` + `on property:sys.phosphor.safeboot=0 start phosphor_agentd`. Absent property ⇒ trigger never fires ⇒ never starts. Fail-closed, and unchanged from rev 2 — it was already correct.
+- **Surface half** (§6.5:304): hands off to the stock launcher and finishes itself **unless the property definitively reads `0`**; "an absent property, a value the app layer cannot see, or any unparseable value **all** mean hand-off."
+- **§8:396-398** states the same rule in one sentence: "`=1` (or absent/unreadable) ⇒ init never starts `phosphor_agentd`; broker not auto-started; shell hands off … UNLESS the property is definitively 0 — fail-closed on both halves."
+
+The two halves are now the same predicate read in the same direction: *only `0` authorises the agent-present path*, on both. That is precisely the inversion NEW-1 demanded. I also checked that no stale polarity survives in normative text: the only occurrences of "when set" are §6.5:304 **repudiating** the old phrasing ("It is *not* 'hand off when set'") and the appendix row describing the fixed bug. Nothing in the document still tells a Phase 5 implementer to hand off "when set".
+
+**§10.2 row present and correctly framed** (§10.2:504): app-layer visibility of a `sys.*` property is declared *not verified*, with the reason it is load-bearing (an unreadable property makes safe-boot the *permanent* state, not merely default to it), a Phase 5 gate ("before §6.5 is implemented"), and the mirror-property fallback. That is the right shape: the fail-closed polarity makes an unreadable property *safe*, and the debt row records that it would also be *wrong*.
+
+*Supporting in-tree note for the Phase 5 owner of that row (informational, not a finding):* app-layer read is probably achievable and its route is a **typing decision, not a runtime check**. `system_prop` is `typeattribute system_prop core_property_type` (`system/sepolicy/private/property.te:164`), and `compatible_property_only` grants `get_prop({coredomain appdomain shell}, core_property_type)` (`system/sepolicy/private/domain.te:506`). So a `sys.*` property declared through the `system_public_prop` macro is readable by `appdomain`; a property declared as a bare `property_type` with only a `property_contexts` line would **not** be. The row's mirror-property fallback covers the second case, but the cheaper fix is to type it `system_public_prop` and add `get_prop(appdomain, phosphor_safeboot_prop)` if the macro route is not taken. Note the precedent the doc already leans on — `sys.boot_completed → boot_status_prop … exact bool` — is a `system_restricted_prop` that needed an **explicit** `get_prop(appdomain, boot_status_prop)` (`system/sepolicy/private/app.te:40`), so "exact bool" alone buys no read access.
+
+## NEW-2 — RESOLVED in substance (latch is one-way against the agent); one enforcement *rationale* sentence is not expressible → NEW-6, non-gating
+
+The Supervisor asked: does the latch actually open a two-way path? **No** — with one precision caveat about *how* the one-way property is enforced.
+
+§6.5:284 now reads: keygate honours `persist.phosphor.safeboot` "**as a set-only latch — it can request safe boot, never cancel it** (transitions `absent→1` only; a `persist` value of `0` is ignored, and the sepolicy `neverallow` is on the reverse direction)." §8:393-395 mirrors it. Tracing the three sources in keygate's decision logic:
+
+- `persist` absent ⇒ no request from this source.
+- `persist`=1 ⇒ request.
+- `persist`=0 ⇒ **ignored** ⇒ no request.
+
+So the latch can only *add* a safe-boot request. It cannot subtract one, because there is no value that means "cancel". **Nothing on the device can cancel a host-requested `ro.boot` safe boot**, since `ro.boot.*` is immutable at runtime. The concern NEW-2 raised — a writable `0` turning a one-way switch into a two-way one — is closed at the value level.
+
+### NEW-6 — MINOR (non-gating) — "the sepolicy `neverallow` is on the reverse direction" is not a SELinux-expressible rule
+
+`property_service set` is checked on `(source context, target type, class, permission)` by `selinux_check_access` (`system/core/init/property_service.cpp:162-174`). **There is no value dimension in the check**, so a `neverallow` cannot distinguish writing `1` from writing `0`. A rule "banned in the reverse direction" cannot be compiled — the same class of defect Coder correctly fixed for NEW-3.
+
+Worse, there is a clear path that no sepolicy rule can close: `CheckType` returns `true` unconditionally for an **empty** value —
+
+```cpp
+// system/core/init/property_type.cpp:31-35
+bool CheckType(const std::string& type_string, const std::string& value) {
+    // Always allow clearing a property such that the default value when it is not set takes over.
+    if (value.empty()) {
+        return true;
+    }
+```
+
+so `exact bool` does **not** protect the latch from being cleared, and clearing returns the property to *absent*, which keygate reads as "no request". Consequence: whoever holds `set` on the latch can both set and clear it.
+
+Why this does **not** gate closure:
+1. The entity that matters is excluded by an *expressible* rule: `phosphor_agentd` and the other Phosphor domains simply are not granted `set` on the latch property. "The agent cannot clear it" — the security-relevant half of the claim — holds.
+2. Clearing is symmetric with setting: the only documented writer is the host over adb (§6.5:306), so the actor who can clear a latch-requested safe boot is the actor who requested it, over the same gated channel.
+3. The genuinely immutable trigger is untouched: `ro.boot.phosphor.safeboot` cannot be cleared by anything, so REC-2's "reachable without the agent's cooperation" never rests on the latch.
+4. Failure mode is availability of an optional extra trigger, not a fail-open of REC-2.
+
+**Fix direction (Phase 5 pre-build, alongside the §10.2 items — not a closure gate):** state the enforcement as what it is — *the latch is one-way because keygate's read logic ignores `0` and because no unprivileged domain holds `set` on the property; SELinux checks the name, not the value, so a `set`-holder can also clear it by writing empty, which is why the host-set `ro.boot` path remains the only immutable trigger.* Two sentences, and it removes a claim a Phase 5 author would otherwise try to implement and fail to compile.
+
+## NEW-3 — RESOLVED, and compile-ready. One footnote.
+
+§8:415 now enumerates permission checks rather than "touching the agent's binary": `neverallow phosphor_keygate phosphor_agentd_exec:file *;` and `neverallow phosphor_keygate phosphor_agentd_data_file:file *;`. I verified this rule **form** is real in-tree, not invented: `neverallow { domain -odsign -init} odsign_data_file:file *;` (`system/sepolicy/private/odsign.te:66`), `… odrefresh_data_file:file *;` (`odrefresh.te:72`), `… stats_data_file:file *;` (`statsd.te:176`). `:file *` is the whole operation set by construction, so the rules cover `execute`, `execute_no_trans`, `entrypoint`, `open`/`read`, `map`, `write`, `create`, `unlink`, `setattr` — all of which I confirmed exist in the `common file`/`file` class definitions (`system/sepolicy/private/access_vectors`). It compiles.
+
+### NEW-7 — MINOR (non-gating) — the parenthetical operation list names a macro that does not exist in this tree
+
+§8:415 lists "`map`/`mmap_exec_file_perms`" among the operations. `mmap_exec_file_perms` is **not defined** anywhere in this tree's sepolicy macros — the sets are `x_file_perms`, `r_file_perms`, `w_file_perms`, `rw_file_perms`, `rx_file_perms`, `rwx_file_perms`, `create_file_perms` (`system/sepolicy/public/global_macros:25-35`); there is no `mmap_exec_file_perms`. Harmless as written, because `:file *` subsumes it and nobody needs to expand the macro — but if a Phase 5 author copies that name into a rule, it fails to compile, which is the exact failure NEW-3 was raised to prevent. Replace with `map` (and, if exec-map is meant, `execmod`) when the sentence is next touched.
+
+## NEW-4 — RESOLVED, and compile-ready.
+
+§8:414 names the artifact and its type: a JSON document (`risk-policy.json`) stored as `phosphor_risk_policy_file`, with `neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } phosphor_risk_policy_file:file { write append create rename setattr unlink };`. Every permission in that list is a valid `file`-class permission (confirmed against `common file` in `system/sepolicy/private/access_vectors`), and the list-and-braces form has precedent (`neverallow pcc_component shell_data_file:file { write create setattr relabelfrom append unlink link rename };`, `system/sepolicy/private/pcc_component.te:331`). The rule is against a **named type**, not "any Phosphor domain", and it preserves §6.3:218's deliberate read grant to agentd and broker — the over-broad reading NEW-4 flagged is gone. The surviving phrase "rather than a vague 'any Phosphor domain'" is the row explaining what it replaced, not a live claim.
+
+## NEW-5 — RESOLVED.
+
+§4.1:172 is exactly the missing scope statement, and it resolves the conflict in the direction that keeps Layer 2 exact rather than weakening it: the `data:`-only allow-list "applies to the agent WebView only", "**no shell-side view ever loads remote content into that WebView** — there is no in-WebView link preview, no remote thumbnail, no embedded document", remote display "performs an explicit **hand-off to the Vanadium browser**", and any future in-WebView remote fetch "is added here as a named, reviewed exception — not by relaxing the allow-list." That is consistent with §4.1:182's renderer-isolation note and leaves the `shouldInterceptRequest` rule, the injected CSP, and the Phase 5 H1 acceptance test (both blocked + inline still executes) untouched. No regression to P4-AUDIT H1's closure.
+
+## What ACCEPT means for the Phase 4 exit criterion
+
+Stated plainly, because the §10.2 table changes what "accept" is worth.
+
+BUILD-PLAN Phase 4's exit criterion (line 261) is: *"The major system boundaries and implementation locations are understood well enough to begin native platform work without guessing."*
+
+**This ACCEPT is an ACCEPT of the document against that criterion, on the declared-debt boundary.** It means: the boundaries, implementation locations and trust assignments are specified well enough that Phase 5 does not have to *guess* — and, critically, that where the document does not know, it says so instead of asserting. §10.2 is now the operative artifact for that judgement: **9 declared rows**, of which 7 carry `[TO VERIFY IN TREE]`, each with an owner and a named Phase 5 step that it blocks. A criterion about "without guessing" is satisfied by a document whose residual unknowns are enumerated and gated; it is *not* satisfied by one whose unknowns are hidden, which is what rev 1 was. That shift — from hidden assumption to declared debt — is the substantive reason for ACCEPT, more than the count of resolved findings.
+
+**It does not mean Phase 4 closes unconditionally, and this audit does not close it.** Three consequences, all already stated by the document itself (§10:511) and none of them softened here:
+
+1. **Four Captain decisions still gate Phase 5 manifest/sepolicy work:** OQ-1 (engine trust acceptance), OQ-2 (credential anchor), OQ-3 (approval-card host), OQ-4 (broker hosting shape). The document correctly refuses to claim unconditional closure, and I am not supplying that claim for it.
+2. **Two §10.2 rows gate implementation steps rather than the phase:** app-layer visibility of `sys.phosphor.safeboot` gates §6.5's implementation, and the `[TO VERIFY IN TREE]` protection levels gate the §3 manifest. Landing Phase 5 against §3 before the second is discharged would repeat rev 1's privilege-level errors in a built artifact.
+3. **NEW-6 and NEW-7 are carried forward as non-gating wording debt**, with the same status as NEW-3/4/5 had in the rev-2 re-audit: they can land at Phase 5 pre-build alongside the `[TO VERIFY IN TREE]` items. If the Supervisor prefers zero carried debt, the cheapest path is to let Coder take them with the §6.5 property-visibility work — but nothing in the architecture rests on them, so they do not withhold acceptance.
+
+The previously circular deferral of the capability inventory and the diagrams remains resolved (both delivered in §3 and §10.1), so the two rev-1 deliverable gaps stay closed.
+
+## Process integrity (rev 3)
+
+`git status --short` shows exactly one modified path: `docs/PHASE-4-PLATFORM-ARCHITECTURE.md`. `find -newermt "2026-11-10 17:00"` (excluding `.crabcakes/`) returns exactly that file. **No source, script, build or device artifact was touched by rev 3**, and the document's closing line — "Design only — no code, builds, or device operations were performed. No file other than this document was created or modified" — is accurate for this revision as well. My own scratch work for this re-audit is one reconstruction script at `.crabcakes/tmp/agent-debugger/replay_rev2.py` (writes only to `/tmp`), which is tooling, not a repo artifact, and I did not modify the audited document.
+
+One process note worth recording for the trail: commit `d44fa6e` (16:59) committed the architecture document **mid-edit**, so the committed blob is neither rev 2 nor rev 3 — it is rev 2 plus six rev-3 edits. Anyone later diffing `HEAD` against rev 3 will read a misleadingly small delta and may conclude rev 3 was cosmetic. The authoritative rev 2 baseline is the reconstruction above, not `HEAD`.
+
+---
+
+*End of final re-audit (rev 3). Verdict: **ACCEPT** — NEW-1 resolved on both halves with the fail-closed polarity now matching agentd's start condition; the §4 `R-SEC-3` row, NEW-2's latch polarity, NEW-3, NEW-4 and NEW-5 all resolved and compile-ready; two non-gating wording items carried forward (NEW-6, NEW-7). Phase 4 remains conditionally closed on OQ-1..OQ-4, per §10:511. The audited document was not modified by this re-audit; no file other than this audit was modified.*
+
+---
+
+# Rev 4 closure check — narrow scope confirmation (`docs/PHASE-4-PLATFORM-ARCHITECTURE.md`, 94862 bytes / 92026 chars, 560 lines)
+
+**Verdict: CONFIRMED.** Phase 4 architecture document **ACCEPTED**; exit criterion met on the declared-debt boundary; **Phase 5 may proceed.**
+**Auditor:** Debugger, 2026-11-10. Scope: the five checks the Supervisor named — §9 rulings, the two closed §10.2 rows, NEW-6/NEW-7, the §10 closure claim, and diff scope. Not a fresh audit.
+
+## Method note — the true rev3→rev4 delta
+
+`git diff HEAD` is **not** a valid delta here either: `HEAD` (`d44fa6e`) still holds the mid-edit rev-2 blob, exactly as recorded in the rev-3 section above. I reconstructed the rev-3 baseline by reversing Coder's 33 recorded rev-4 `edit_file` calls from the feed log (`.crabcakes/tmp/agent-debugger/replay_rev4.py`, writes only to `/tmp`). The reconstruction is **80399 bytes / 556 lines — byte-identical to the rev-3 artifact this file accepted at line 387**, which independently validates the method and the patch's stated base. True delta: 20 hunks, 279 diff lines.
+
+## (1) §9 rulings recorded DECIDED — correct, and downstream no longer contradicts them
+
+All four rulings match the Captain's decision as relayed, verified line by line at §9:442-445: **OQ-1** ride GrapheneOS-signed Vanadium Phases 4–9 / revisit before Phase 12; **OQ-2** Keystore-wrapped + per-flash, secret-at-rest *best-effort* until relock; **OQ-3** broker-hosted card; **OQ-4** standalone platform-signed app, escalate only per-capability. OQ-5/6/7/8 correctly remain `Open` and correctly non-gating.
+
+Every downstream site is brought into line and I found **no contradictory survivor**: §1.1:42, §2.1:73, §2.2:85, §3:112, §5:193, §6.2:215, §6.4:265-266, §8:365-366 + §8:370-371 + §8:374 + §8:405, §10:459, §10.2:506-507, §10:512. Specifically the item flagged in the request — **the §8 diagram annotation that left OQ-3 open is gone**: the `[OQ-3 — OPEN]` box (rev-3 lines 380-384) is deleted and the card is drawn inside the broker's box as `native approval card — OQ-3 DECIDED: rendered here` (§8:374). A tree-wide search for `NOT DECIDED`, `NOT DECIDED HERE`, `provisional — OQ-4`, and `hosting shape = OQ-4` open-forms returns only the corrected `DECIDED` forms. §10.1's trust-zone table (Z1 "must never … render an approval card") already agreed with broker-hosting and needs no change.
+
+## (2) The two §10.2 rows — both results independently verified in-tree
+
+**V-1 — CONFIRMED.** Against `projects/grapheneos-2026091900`: `NEARBY_WIFI_DEVICES` = `dangerous` (`frameworks/base/core/res/AndroidManifest.xml:2685`); `NFC` = `normal` (`:2811`); `MODIFY_AUDIO_ROUTING` = `signature|privileged|role` (`:7595`). All three exactly as cited, and all three match the levels §3 already quoted — so the tag, not the assertion, was the error. The three `[TO VERIFY IN TREE]` tags are removed from those rows (§3:109, §3:118, §3:134) and **`bt.connect`'s profile-API tag is untouched and still debt** (§3:126), as claimed.
+
+**V-2 — CONFIRMED, citations exact.** `sys.` → `system_prop` (`private/property_contexts:23`); `system_prop` is a `system_public_prop` (`public/property.te:262`); `get_prop(appdomain, boot_status_prop)` precedent (`private/app.te:40`), macro at `public/te_macros:385-387` (`{ getattr open read map }`). The reasoning is **correct and non-trivial**: `define_prop` (`public/te_macros:922-924`) and `system_public_prop` (`:956`) emit only a *type declaration* — no read grant — so an app-layer read genuinely does require the named `get_prop`. Resolution to a Phase 5 sepolicy rule with the mirror-property retained as escape hatch is the right disposition; §8:417's subtraction form `{ system_prop -phosphor_safeboot_prop }` is real in-tree policy shape (`private/property.te:228-244, 310-321` use exactly this `-prop` subtraction).
+
+**NEW-6 — CONFIRMED, and the correction is right.** `property_service.cpp:162-175` is `CheckMacPerms` → `selinux_check_access(..., "property_service", "set", ...)`, i.e. **label-level, no value dimension**; `property_type.cpp:31-35` is `CheckType` returning `true` for any empty value. So a `neverallow` "on the reverse direction" was indeed inexpressible, and withdrawing it was the correct call. The three replacement facts are the true statement.
+
+**NEW-7 — CONFIRMED.** `mmap_exec_file_perms` appears nowhere in the tree; `public/global_macros:25-35` defines exactly the eight `*_file_perms` sets the finding named. It is dropped from §8:416 and the prose list reads the nine operations. All nine are valid `file`-class permissions — I verified `execute`, `read`, `write`, `create`, `getattr`, `setattr`, `map`, `append`, `unlink`, `rename`, `open` in `common file` (`private/access_vectors:11-38`) and `execute_no_trans`, `entrypoint` in `class file` (`:180-185`). `:file *` subsumes them, so the rule is compile-ready.
+
+## (3) §10 closure claim — justified as stated
+
+All four Phase-5-gating OQs are decided and both gating verification rows (property visibility → §6.5; the three protection levels → §3 manifest) are closed. The remaining §10.2 rows are `bt.connect`'s profile API, `tel.hangup`'s coverage path, keygate's key-chord semantics, the one `get_prop` rule to write, and the named Phase 5 acceptance tests — **all implementation work with an owner and a phase, none an undecided architecture fork.** "Closed on the declared-debt boundary" is the accurate claim, and §10:512 keeps it honest by saying explicitly that it does not mean the debt is discharged.
+
+## (4) Scope — clean
+
+`git status --short` shows the architecture doc and this audit as the only content changes (plus `.crabcakes/context.md`, the project diary); the rev-4 write window contains 33 `edit_file` calls, **all** on `docs/PHASE-4-PLATFORM-ARCHITECTURE.md`, and no `write_file`/`sed -i`/redirection against any other path. The 20 hunks fall in exactly the declared places plus the appendix and header. The document's closing line remains true for this revision.
+
+## Residuals — recorded, **non-gating**, do not withhold Phase 5
+
+Neither contradicts a ruling nor reopens an architecture fork; both are Phase-5/Phase-10 implementation facts, so I am not converting them into FIX FIRST. Recording them so they are not lost:
+
+- **R-1 (MINOR, Phase 10, in the V-1 row).** The NFC row Coder de-tagged also asserts HCE `BIND_NFC_SERVICE` — `signature|privileged` (§3:134). In-tree it is **`signature|module`** (`AndroidManifest.xml:6430-6431`). That claim was never tagged, so it is outside V-1's declared scope and is not a rev-4 regression — but the row now reads "verified in tree", which makes the wrong neighbour level more credible than before. NFC is deferred to Phase 10, so nothing in Phase 5 depends on it. Fix when the row is next touched; the mechanism difference matters (module-boundary, not a `privapp-permissions` grant).
+- **R-2 (MINOR, Phase 5, in the NEW-6 rewrite).** NEW-6(a) says no Phosphor domain holds `set` "on the latch's type", but **§8 declares a type only for `phosphor_safeboot_prop`; no type is declared for `persist.phosphor.safeboot`.** Absent a declaration it falls to `*` → `default_prop` (`private/property_contexts:168`), where `neverallow { domain -init } default_prop:property_service set` (`private/property.te:805-808`) blocks every non-init writer. NEW-6(c)'s "clearing is symmetric with setting" stays literally true, but §6.5:307's residual-gap promise of "setting the set-only `persist` latch over adb" is then unachievable until Phase 5 declares a dedicated type **and** grants the documented writer `set` on it. Not load-bearing — NEW-6(b) correctly makes `ro.boot` the REC-2 carrier — so this is a Phase 5 sepolicy item to name, not a flaw in the correction.
+
+---
+
+*End of rev 4 closure check. Verdict: **CONFIRMED** — all four OQ rulings recorded correctly with no downstream contradiction and the §8 OQ-3 annotation closed; V-1 and V-2 both independently reproduced in-tree (protection levels at `AndroidManifest.xml:2685/2811/7595`; property chain at `property_contexts:23` → `public/property.te:262` → `private/app.te:40`), `bt.connect`'s tag correctly left in place; NEW-6's inexpressible rationale withdrawn and replaced with claims that verify, NEW-7's `mmap_exec_file_perms` dropped with all nine remaining operations confirmed valid `file` permissions; §10's declared-debt closure justified; diff scope clean. **Phase 4 exit criterion met — Phase 5 may proceed.** Two non-gating residuals recorded (R-1 Phase 10, R-2 Phase 5). The architecture document was not modified by this check; no file other than this audit was modified.*
