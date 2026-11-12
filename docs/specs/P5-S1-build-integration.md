@@ -1,6 +1,6 @@
 # P5-S1 — Build integration: Phosphor repositories and modules in the `akita` build
 
-**Phase:** 5 · **Spec ID:** P5-S1 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+**Phase:** 5 · **Spec ID:** P5-S1 · **Rev:** 2 (errata 2026-11-10, PM-approved: priv-app install paths, B6 host path, A5 baseline wording) · **Owner:** Coder (builder) / Debugger (auditor)
 **Status:** DRAFT — awaiting PM approval. This spec authorizes **no code, no build, no device operation** by itself; the builder executes it after approval.
 **Depends on:** nothing. Phase 4 architecture `docs/PHASE-4-PLATFORM-ARCHITECTURE.md` rev 4 is **CLOSED**; the Phase 2/3 platform pipeline is proven (`docs/PROJECT-STATUS.md` §6).
 **Blocks:** **all of P5-S2 … P5-S8.** No other Phase 5 spec can be built before S1 lands, because every later spec adds code to a module that S1 creates.
@@ -17,8 +17,8 @@ Make the GrapheneOS `akita` build produce **five empty-but-real Phosphor modules
 | `phosphor-agentd` | `cc_binary` | `/system/bin/phosphor-agentd` | stub `main()` → exit 0. Never started (no `.rc` until S4). |
 | `phosphor-keygate` | `cc_binary` | `/system/bin/phosphor-keygate` | stub `main()` → exit 0. Never started (no `.rc` until S3). |
 | `phosphor-ctl` | `cc_binary` | `/system/bin/phosphor-ctl` | stub `main()` → prints `phosphor-ctl: not implemented` to stderr, exit 2. (Filled in by S8; **not** a fifth Phosphor process/domain — it is an on-demand tool invoked from `adb shell` and runs in the existing `shell` domain, so it needs no `phosphor_*` domain and no fifth AID. Fixed by S2 A8; see §2 last row.) |
-| `PhosphorShell` | `android_app` | `/system/app/PhosphorShell/PhosphorShell.apk` | valid APK, package `com.phosphor.shell`, **zero declared components**. (Filled in by S5.) |
-| `PhosphorBroker` | `android_app` | `/system/app/PhosphorBroker/PhosphorBroker.apk` | valid APK, package `com.phosphor.broker`, **zero declared components**, zero permissions. (Filled in by S6.) |
+| `PhosphorShell` | `android_app` | `/system/priv-app/PhosphorShell/PhosphorShell.apk` | valid APK, package `com.phosphor.shell`, **zero declared components**. (Filled in by S5.) |
+| `PhosphorBroker` | `android_app` | `/system/priv-app/PhosphorBroker/PhosphorBroker.apk` | valid APK, package `com.phosphor.broker`, **zero declared components**, zero permissions. (Filled in by S6.) |
 
 Plus: one product fragment, one sepolicy directory wired but empty, one read-only policy artifact staged, and one local-manifest entry.
 
@@ -71,7 +71,7 @@ packages/phosphor/
   apps/PhosphorBroker/            # android_app PhosphorBroker  (S6)
 ```
 
-**B3 — Module definitions.** `cc_binary` modules use `stem:` equal to the module name so the installed filename is `phosphor-agentd` etc.; `android_app` modules use `platform_apis: true`, `certificate: "platform"`, `privileged: true`, and a minimal valid `AndroidManifest.xml` (package only, no `<application>` components beyond `android:label`). No module declares `init_rc` in S1 — the `.rc` install is part of S3/S4 so that S1 cannot start anything at boot.
+**B3 — Module definitions.** `cc_binary` modules use `stem:` equal to the module name so the installed filename is `phosphor-agentd` etc.; `android_app` modules use `platform_apis: true`, `certificate: "platform"`, `privileged: true`, and a minimal valid `AndroidManifest.xml` (package only, no `<application>` components beyond `android:label`). No module declares `init_rc` in S1 — the `.rc` install is part of S3/S4 so that S1 cannot start anything at boot. With `privileged: true`, Soong installs both apps under `/system/priv-app/` (`build/soong/java/app.go:1091-1093` — `else if a.Privileged()`, no override); every install path in this spec set uses `priv-app` (rev-2 erratum, verified in-tree 2026-11-10).
 
 **B4 — Product hook, exactly one line in a third-party file.** `packages/phosphor/phosphor.mk` is inherited by appending exactly one line to `vendor/adevtool/config/mk/google_devices/device/akita/device.mk`:
 
@@ -117,7 +117,7 @@ Both sepolicy directories ship with a `README` only in S1 (an empty directory in
 </manifest>
 ```
 
-Development variant (until the remote exists): replace `remote` with `fetch="file:///home/qoder/projects/Phosphor-platform.git"` against a local bare mirror. Afterwards `repo manifest -r > .repo/manifest-pinned.xml` must be re-run so the pin file records our project at a commit hash. The Phase 2 provenance claim (`docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md` §3.4) remains valid for GrapheneOS projects; our project is provenance-recorded separately and this split must be stated in the completion note.
+Development variant (until the remote exists): replace `remote` with `fetch="file:///home/cptjaqx/projects/Phosphor-platform.git"` against a local bare mirror. Afterwards `repo manifest -r > .repo/manifest-pinned.xml` must be re-run so the pin file records our project at a commit hash. The Phase 2 provenance claim (`docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md` §3.4) remains valid for GrapheneOS projects; our project is provenance-recorded separately and this split must be stated in the completion note.
 
 **B7 — Stub sources.** `services/*/main.cpp` is exactly:
 
@@ -163,8 +163,8 @@ Pass = exit code 0, `ninja: build stopped` absent, `FAILED:` absent, `out/` size
 ls -l out/target/product/akita/system/bin/phosphor-agentd \
       out/target/product/akita/system/bin/phosphor-keygate \
       out/target/product/akita/system/bin/phosphor-ctl
-out/host/linux-x86/bin/aapt2 dump badging out/target/product/akita/system/app/PhosphorShell/PhosphorShell.apk | head -1
-out/host/linux-x86/bin/aapt2 dump badging out/target/product/akita/system/app/PhosphorBroker/PhosphorBroker.apk | head -1
+out/host/linux-x86/bin/aapt2 dump badging out/target/product/akita/system/priv-app/PhosphorShell/PhosphorShell.apk | head -1
+out/host/linux-x86/bin/aapt2 dump badging out/target/product/akita/system/priv-app/PhosphorBroker/PhosphorBroker.apk | head -1
 grep -cE '^(phosphor-|Phosphor)' out/target/product/akita/product_packages.txt
 ```
 
@@ -172,7 +172,7 @@ Pass = three binaries present and executable, both APKs report `package: name='c
 
 **A4 — Zero boot-time behaviour.** Static proof, no device: no `init_rc` property in any `Android.bp` under `packages/phosphor` (`rg -n 'init_rc' packages/phosphor` → empty); `rg -n 'sepolicy/.+' packages/phosphor/sepolicy` finds only READMEs; `unzip -l` the two APKs shows a manifest with no `<activity>`, `<service>`, `<receiver>`; `rg -n 'PRODUCT_COPY_FILES' packages/phosphor/phosphor.mk` copies exactly one file and it is the JSON policy artifact.
 
-**A5 — Third-party modification surface is exactly one line.** `repo status -j24` (or `git status` per project) shows modifications **only** in `vendor/adevtool` (one line added to `device.mk`) and in `packages/phosphor` (new). Any other modified GrapheneOS project fails this spec. The `repo status` output is attached as evidence.
+**A5 — Third-party modification surface is exactly one line.** `repo status -j24` (or `git status` per project) shows modifications **only** in `vendor/adevtool` (one line added to `device.mk`) and in `packages/phosphor` (new). Pre-existing adevtool dirt — baseline 2026-11-10, **not** S1's: `package.json` and `yarn.lock` modified, `.yarn/` and `.yarnrc.yml` untracked; these four paths are excluded from this criterion. Any other modified GrapheneOS project fails this spec. The `repo status` output is attached as evidence.
 
 **A6 — Provenance recorded.** Completion note states: (a) our project's commit, (b) the re-pinned `manifest-pinned.xml` line count delta, (c) that GrapheneOS's own signed-tag verification is unaffected, (d) the adevtool regeneration was performed from config, not by hand-editing `vendor/google_devices`.
 

@@ -2,7 +2,7 @@
 
 **Phase:** 5 · **Spec ID:** P5-S5 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
 **Status:** DRAFT — awaiting PM approval.
-**Depends on:** **P5-S1** (module `PhosphorShell`, `/system/app/PhosphorShell/`, `product_packages.txt` entry), **P5-S2** (`phosphor_shell` domain, `seapp_contexts` entry, `get_prop(appdomain, phosphor_safeboot_prop)`, no read on the policy artifact), **P5-S3** (`sys.phosphor.safeboot` written fail-closed on every boot; S5's hand-off polarity is only *correct* if keygate writes it).
+**Depends on:** **P5-S1** (module `PhosphorShell`, `/system/priv-app/PhosphorShell/`, `product_packages.txt` entry), **P5-S2** (`phosphor_shell` domain, `seapp_contexts` entry, `get_prop(appdomain, phosphor_safeboot_prop)`, no read on the policy artifact), **P5-S3** (`sys.phosphor.safeboot` written fail-closed on every boot; S5's hand-off polarity is only *correct* if keygate writes it).
 **Blocks:** the visible half of **S8**'s exit checklist, and Phase 6 (which fills the rendering surface into this skeleton). Does not block S6/S7.
 **Authority:** architecture §1.1 (renderer choice + kiosk constraints + WebView hardening set), §1.2 ("Launcher3 installed, not default; default resolves to PhosphorShell **except in safe boot**"), §4 / §4.1 (subresource policy; §4.1 Layer 2 is a MUST and lives in this app), §6.5 ("Plain surface" bullet + NEW-1's polarity), §8's map (shell box: "safe-boot: starts stock launcher by component and finishes"; "no binder server; socket client"), §2.1 (shell holds **exactly one** capability permission, `RECORD_AUDIO`).
 
@@ -176,7 +176,7 @@ Pass = all four, with the incidents logged. This is NEW-1's acceptance in the ap
 
 **A6 — Exactly one capability permission, one component.**
 ```bash
-aapt2 dump permissions out/target/product/akita/system/app/PhosphorShell/PhosphorShell.apk   # -> RECORD_AUDIO only
+aapt2 dump permissions out/target/product/akita/system/priv-app/PhosphorShell/PhosphorShell.apk   # -> RECORD_AUDIO only
 aapt2 dump badging …  | grep -E 'launchable|category'                                       # -> HOME/DEFAULT only
 ```
 Pass = `RECORD_AUDIO` is the only `uses-permission`; the merged manifest has exactly one `<activity>` and zero `<service>/<receiver>/<provider>`; the APK carries **our platform certificate** (§2.1: platform-signed).
