@@ -1,0 +1,1 @@
+- p5-s1-phase1b-accepted — P5-S1 Phase 1b (tree integration) ACCEPTED 2026-11-12 after 4-round adversarial plan loop + post-execution audit, zero f

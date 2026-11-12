@@ -1,0 +1,90 @@
+[line 110 of docs/specs/P5-S6-broker-app.md]
+110|| Bound service | `…/PhosphorBrokerService.java` (broker process context) |
+111|| AIDL | `…/aidl/com/phosphor/broker/IPhosphorBroker.aidl`, `ApprovalRequest.aidl`, `Decision.java` |
+112|| Registry | `…/ApprovalRegistry.java` |
+113|| Card | `…/ApprovalCardActivity.java` + `res/layout/approval_card.xml` |
+114|| Policy check | `…/PolicyArtifact.java` |
+115|| Audit | `…/AuditLog.java` |
+116|| Domain/permission | S2's `phosphor_broker.te`, `seapp_contexts`, artifact read grant |
+117|
+118|`[VERIFY AT BUILD: the broker's UID spelling is explicitly provisional in architecture §2.1 ("`AID_PHOSPHOR_BROKER` *(spelling provisional; hosting shape now fixed by the OQ-4 ruling)*"). S2 declares the AID; the *name* may be adjusted at implementation — record the final spelling so §2.1's caveat can be retired.]`
+119|
+120|---
+121|
+122|## 4. Acceptance criteria
+123|
+124|**A1 — Bind from the agentd/shell path (the Supervisor's acceptance).** With agentd alive (S4's normal boot), the shell-side and agentd-side test client each bind:
+125|```bash
+126|adb shell am startservice -n com.phosphor.broker/.PhosphorBrokerService    # expected: refused (not a started service / not exported)
+127|adb shell dumpsys activity services com.phosphor.broker                     # shows the bound client records
+128|```
+129|Pass = the service appears with at least one live `Client connections` row whose package is `com.phosphor.shell` (or agentd's test client), `ping()` returns the expected `int` (via the test client's logcat line), and an **unprivileged third-party** bind attempt fails with `SecurityException`/`Permission Denial`. The negative case is mandatory: a bind that succeeds from `untrusted_app` fails the spec.
+130|
+131|**A2 — The card renders with the shell dead (the Supervisor's other acceptance).**
+132|```bash
+133|adb shell am force-stop com.phosphor.shell
+134|adb shell pidof com.phosphor.shell          # -> empty
+135|# trigger a card from the test client (submitForApproval, DESTRUCTIVE)
+136|```
+137|Pass = the card appears (screenshot), shows the method + args + class verbatim, and Approve/Deny both return the corresponding decision to the client (verified in logcat). Deny **and** Approve separately exercised. Then, with the shell killed, a second card ***also*** renders — proving independence, not a one-off.
+138|
+139|**A3 — Empty capability surface.** `aapt2 dump permissions …/PhosphorBroker.apk` → output contains **no** `uses-permission` lines; `rg -n 'uses-permission' packages/phosphor/apps/PhosphorBroker` → empty; `dumpsys package com.phosphor.broker | grep -A20 'grantedPermissions'` → nothing §3-shaped. The completion note lists every §3 row as **Phase 9 deferred** (A7 cross-check).
+140|
+141|**A4 — Card content is system-verified and single-use.**
+142|- The client sends `argsJson`; the card displays exactly that string; then the client mutates its own copy and the displayed text does **not** change (snapshot proof).
+143|- After Approve, a second Approve for the same token returns a fresh `EXPIRED`/no-entry result — single-use.
+144|- 5-min TTL: an unattended card expires; the client's call returns `EXPIRED`; the entry is swept. `[VERIFY AT BUILD: use a shortened TTL in a debug build to avoid a 5-minute wait; the production constant is 5 min.]`
+145|
+146|**A5 — Policy version fail-closed.** With the artifact renamed/masked (test build) or a deliberately mismatched build stamp: `submitForApproval` returns `VERSION_MISMATCH`, a `policy_error`-class audit event is logged, **no card renders**, and the code path contains no fallback that returns `APPROVED`. Demonstrate the negative: reverting the mask restores `APPROVED`-capable behaviour.
+147|
+148|**A6 — No auto-start in safe boot.** On the S3-approved safe-boot boot: `adb shell pidof com.phosphor.broker` → empty; `dumpsys activity services com.phosphor.broker` → no such service running; no broker logcat lines for that boot. (Multi-trigger via bind only.)
+149|
+150|**A7 — §3 deferral is documented, row by row.** The completion note reproduces §3's table with an explicit Phase 9 marker per row (telephony, SMS, contacts, notifications, settings, audio, sensors, location, camera/torch, Bluetooth, clipboard, vibrator, apps, files) and a one-line reason (`hardRestricted` allowlist not yet built, capability not implemented, etc.). Anything not marked is a defect.
+151|
+152|**A8 — Audit logged, payload not retained.** Trigger one Approve, one Deny, one Expire: `logcat -s phosphor-broker` shows three structured events with method + hash + class; the durable `audit.log` contains no `argsJson` body (assert by searching for a sentinel payload string).
+153|
+154|**A9 — No artifact write, no over-reach.** `logcat -b all -d | grep 'avc: *denied' | grep phosphor_broker` → empty; static: no `FileOutputStream`/write path touching `risk-policy.json`; `rg -n 'risk-policy' packages/phosphor/apps/PhosphorBroker` → read-only call sites.
+155|
+156|**A10 — Escalation not taken.** The completion note states that OQ-4's standalone-app shape was used and that **no** `system_server` injection or hybrid was introduced, and lists any capability that S6 found to *demand* escalation (expected: none, since nothing is implemented). A silent escalation fails the spec.
+157|
+158|---
+159|
+160|## 5. Edge cases
+161|
+162|| Case | Required behaviour |
+163||---|---|
+164|| Shell dead when a card is requested | Card renders from the broker (A2). This is the whole point of OQ-3. |
+165|| Broker dead when a card is requested | Caller gets an exception ⇒ **fail closed**: the caller must treat "no broker" as "no gated capability" (§7: "no broker, no gated capability, period"). S6 records the caller-side obligation; S7 implements it. |
+166|| Card cannot be shown (background-start restriction) | Stop-the-line: record the exact platform refusal, use the notification+registry fallback, and if neither renders, **S6 fails** — an unrenderable card means the gate does not exist. |
+167|| Two simultaneous cards | Serialise: one card at a time, queued in arrival order; the registry does not accept a decision for a card not currently shown. Record the queue bound (reject beyond N with a logged denial) rather than growing unbounded. |
+168|| Caller process dies while card is up | Entry expires normally; card stays dismissible; no crash. Never auto-approve on caller death. |
+169|| Caller re-submits the same request 5× | New entries (single-use each), queue bound limits; no dedup that could merge two distinct approvals into one. |
+170|| `SAFE` classification submitted | No card; `NOT_IMPLEMENTED` (execution is Phase 8). Never a card for `SAFE` — that would train users to approve reflexively. |
+171|| `DESTRUCTIVE-READ` submitted | Card **always**, never auto-approved even with a permissive policy entry (§6.3). Assert no code branch can bypass. |
+172|| Policy version matches but artifact hash changed | S6 has no hash check (it is Phase 8's re-check); record that the **hash** check is deferred so it is not mistaken for present. |
+173|| Broker bound but artifact unreadable | Every submit denies with `VERSION_MISMATCH`; `ping()` still works (diagnostics must not require a healthy policy). |
+174|| Escalation temptation: "just make it a system service" | Recorded refusal — OQ-4 is DECIDED; escalation is per-capability and recorded, never a drift. |
+175|| Device reboots mid-approval | Registry is in-memory ⇒ entries lost. That is correct (single-use, no persistence of pending approvals) and must be stated so it is not later "fixed" into a persisted auto-approve. |
+176|
+177|---
+178|
+179|## 6. Definition of done / auditor checklist
+180|
+181|- [ ] A1–A10 pass. A2/A4/A5/A6 use the S3/S4-approved boots and in-session actions; no new device operation.
+182|- [ ] OQ-4 shape: standalone platform-signed privileged app; **no** escalation; documented in the completion note.
+183|- [ ] OQ-3 shape: card rendered **inside the broker**, from the registry snapshot, with the shell dead (A2).
+184|- [ ] Zero `<uses-permission>` — provably (A3), with §3's rows marked Phase 9 deferred (A7).
+185|- [ ] Registry: single-use, 5-min TTL, denial-as-result not exception, survives agent death, queue bounded.
+186|- [ ] Policy version: build-stamped constant vs. file value, fail-closed on all three failure modes, **no** write path.
+187|- [ ] Closed class enum only (`SAFE`/`DESTRUCTIVE`/`DESTRUCTIVE-READ`); `SAFE` never prompts; `DESTRUCTIVE-READ` never auto-approves.
+188|- [ ] Audit: events logged, payload hashed not retained.
+189|- [ ] Card launched at most one at a time; unrenderable card = fail.
+190|- [ ] No safe-boot auto-start (A6).
+191|
+192|## 7. Open items created by this spec
+193|
+194|1. Card launch mechanism vs. Android background-activity-start restriction (§2.5) — builder, with the fallback recorded.
+195|2. `AlertDialog` vs `DialogFragment` and the platform theme (§2.5) — builder.
+196|3. Final `AID_PHOSPHOR_BROKER` spelling (§3) so §2.1's "provisional" caveat can be retired.
+197|4. Artifact **hash** verification deferred to Phase 8 (§5 row) — recorded, not silently absent.
+198|5. The §3 permission set's manifest landing (Phase 9) including the `hardRestricted` allowlist build deliverable (MAJOR-4) and the notification-listener overlay (`config_defaultListenerAccessPackages`, MINOR-4) — owner: Phase 9, named here so it is not lost.

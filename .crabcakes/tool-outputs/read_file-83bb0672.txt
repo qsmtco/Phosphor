@@ -1,0 +1,73 @@
+[line 110 of docs/specs/P5-S7-ipc-channels.md]
+110|| Broker client wrappers | `…/PhosphorIpc/BrokerClient.{h,cpp}` (agentd, C++) or `…/PhosphorIpc/broker.rs` (if agentd is Rust — S4 open item 1 decides) |
+111|| Shell→broker relay | `…/apps/PhosphorShell/…/PhosphorApi.java` |
+112|| AIDL | `…/apps/PhosphorBroker/aidl/com/phosphor/broker/IPhosphorBroker.aidl` (S6) |
+113|| Credential seam | `…/PhosphorIpc/credential_hooks.h` |
+114|| Policy | S2's `neverallow` binder rules; **no new rules expected** — if S7 needs one, that is a finding |
+115|
+116|---
+117|
+118|## 4. Acceptance criteria
+119|
+120|**A1 — C-A round-trips.** With agentd alive: the shell connects, `HELLO`/`HELLO_ACK` exchange succeeds (versions match, `policy_version` non-empty, `safeboot=0`), a `TEXT_IN` yields `TEXT_ACK` with the same payload, a `SCREEN_OUT` arrives and is logged with its byte length, and `STATE` heartbeats appear at the declared interval. Evidence: the shell's and agentd's logcat lines plus `health`'s `last_frame_at` advancing.
+121|
+122|**A2 — C-B/C-C round-trip.** agentd's client binds the broker and `ping()` returns; shell's `phosphorApi.request(...)` reaches the broker (broker logs the call; returns `NOT_IMPLEMENTED` per S6). Evidence: broker logcat shows **two distinct** client pids/UIDs (agentd's and shell's), and `dumpsys activity services com.phosphor.broker` lists two connections.
+123|
+124|**A3 — Denied outside the pair (the primary acceptance).** Three negative tests, each must fail closed:
+125|- **(a) Wrong UID/label on C-A:** a test client not in `phosphor_shell` (run as `shell`, or a `untrusted_app` helper) connects ⇒ `peer_rejected` logged with its uid+label, connection closed, **no data accepted**.
+126|- **(b) Wrong domain on C-B/C-C:** an `untrusted_app` attempts to bind the broker ⇒ `SecurityException`; and the **policy** denies it independently — `rg` the compiled policy / cite S2's `neverallow` as the second layer. Two layers, both shown.
+127|- **(c) agentd→shell binder:** agentd has **no** binder path to the shell at all (§8: "Removes rev 1's contradictory 'neverallow … except to broker + shell'"). Prove it by attempting a bind to any shell-exported service: there is none (S5 A6), and the policy names nothing — evidence is the **absence**, which must be demonstrated by the compiled policy not containing such an allow, plus a `neverallow` if expressible.
+128|
+129|**A4 — Frame validation is strict.** Feed: unknown `version` ⇒ `ERROR(BAD_VERSION)` + close; a body over the 1 MiB limit ⇒ `ERROR(BAD_FRAME)` + close; a truncated/reordered frame cannot occur under `SOCK_SEQPACKET`, so the test is a raw `sendmsg` of a malformed header ⇒ rejected. Pass = all three rejected, none partially applied.
+130|
+131|**A5 — One admitted peer, deterministic reconnect.** Kill the shell while connected, relaunch: agentd accepts exactly one new peer, logs the closed old fd, `health` updates; the shell's backoff is observable in its log (250 ms → 8 s, jittered) and never hot-loops.
+132|
+133|**A6 — No capability rides C-A.** Static: `rg -n 'tel\.|sms\.|contacts\.|camera\.|settings\.|geo\.|clip\.' services/PhosphorIpc services/PhosphorAgentd/src/socket.rs` → empty (except comments naming the prohibition). If a tool vocabulary appears on the socket, the spec fails — the channel is outside the classifier by design (§8 note 4), and putting a tool name in it would make "every consequential action crosses the broker" false.
+134|
+135|**A7 — Broker deadline and fail-closed client behaviour.** Simulate a broker that never answers (or an artificially long TTL): the client returns at its deadline as `EXPIRED`/"declined", not hanging. Simulate `SecurityException`: client returns fail-closed, **logs no retry**, and the registry has no duplicate entry.
+136|
+137|**A8 — Credential seam refuses.** `credential_state()` returns `NOT_PROVISIONED` and the agent surfaces it as "model unavailable" rather than crashing or pretending. Static: no function in `PhosphorIpc` returns/accepts/transports key material; no binder method, socket frame, or service exposes provisioning. `rg -n 'provision' packages/phosphor` → the seam and its comment only.
+138|
+139|**A9 — Redaction at both ends.** Neither side logs a `TEXT_IN` body verbatim; audit logs carry method + hash (S6's rule extended to C-A: a `TEXT_IN` body is user text). Assert with a sentinel string that must not appear in `logcat` after a send.
+140|
+141|**A10 — No new permissions, no new policy surface.** The diff adds zero `<uses-permission>`, zero `<service>` beyond S6's, and (ideally) zero policy rules. Any new rule is a finding to be justified line-by-line against §8.
+142|
+143|---
+144|
+145|## 5. Edge cases
+146|
+147|| Case | Required behaviour |
+148||---|---|
+149|| Shell starts before agentd is listening | Connect fails ⇒ backoff; on agentd's later bind, the shell connects. Never a busy loop, never a crash. |
+150|| agentd restarts while the shell is connected | Socket fd becomes invalid; shell sees EOF/`EPIPE`, goes to `offline` state, reconnects with backoff. The screen shows the offline state (§2.2 crash-safe home). |
+151|| Stale socket file after a hard kill | agentd unlinks-then-binds *only if the path is a socket it owns*; a non-socket at the path is a fatal error, never unlinked (symlink-planting defence, S4 §5). |
+152|| Two shell processes (accidental) | Second `accept` replaces the first and logs; the first gets a clean close. Record it as a bug signal, not a feature. |
+153|| Very large screen payload (>1 MiB) | Rejected with `ERROR(BAD_FRAME)`; Phase 6 must chunk or raise the limit by a reviewed change. **Never** truncate a screen silently — a truncated screen is a lie to the user. |
+154|| Blocking `submitForApproval` while the user is away | Deadline ⇒ `EXPIRED` ⇒ "declined" tool result. No queue of unanswered prompts growing unbounded (S6's queue bound applies). |
+155|| Broker not installed (build defect) | Bind fails ⇒ fail closed; every gated call returns "declined/unavailable". No fallback that executes. |
+156|| C-A peer is the shell but the shell is compromised | Out of scope for the *channel*: the compromise is contained by the shell holding only `RECORD_AUDIO` and having no broker privileges beyond the same AIDL surface (§2.1's split is the mitigation). State this so the channel is not credited with a guarantee it does not provide. |
+157|| Provisioning attempted from a device process | Refused by design; recorded as a review-blocking change (§2.3). |
+158|| Relock changes Keystore semantics | OQ-5 (Phase 12): secret-at-rest becomes a guarantee only after relock (§9). The seam's comment must say so, so nobody claims at-rest protection now. |
+159|
+160|---
+161|
+162|## 6. Definition of done / auditor checklist
+163|
+164|- [ ] A1–A10 pass; device work reuses the S3/S4-approved boot and in-session actions.
+165|- [ ] C-A is `SOCK_SEQPACKET`, shell-connects, three-check admission (uid, label, liveness), `0600` socket in a `0700` dir.
+166|- [ ] Frame header versioned; unknown version/malformed header rejected; 1 MiB limit frozen; drop policy for `SCREEN_OUT` stated.
+167|- [ ] **Denied outside the pair** proven at both layers (credential check **and** policy), including agentd→shell's *absence*.
+168|- [ ] Shell is a dumb relay; no policy in the proxy; no cached unlock.
+169|- [ ] Client deadline on `submitForApproval`; fail-closed on `SecurityException`/`RemoteException`; no double-submit.
+170|- [ ] Credential seam: state only, no secret transport, **no in-device provisioning path**; `NOT_PROVISIONED` handled as a real state; relock caveat recorded.
+171|- [ ] No capability vocabulary on C-A (A6) — the channel stays outside the classifier.
+172|- [ ] Redaction at both ends; sentinel test passes.
+173|- [ ] Zero new permissions/services; any new policy rule justified.
+174|
+175|## 7. Open items created by this spec
+176|
+177|1. Frame body limit vs. Phase 6 screen size — chunking decision deferred, limit frozen at 1 MiB (§2.1).
+178|2. agentd's language (Rust vs C++) decides the broker-client file (§3) — inherits S4 open item 1.
+179|3. Keystore/StrongBox implementation and the host provisioning procedure — **Phase 5 debt carried to the phase that provisions**, gated as a device operation with PM approval; must not be implemented device-side.
+180|4. `SCREEN_OUT` drop policy needs a Phase 6 review once screens are large and stateful.
+181|5. Whether `SO_PEERSEC` label retrieval needs a specific API on this tree (`getSoPeerSid` on `LocalSocket` vs raw `getsockopt`) — builder, at implementation.

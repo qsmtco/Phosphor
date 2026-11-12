@@ -1,0 +1,4 @@
+<manifest>
+  <remote  name="phosphor" fetch="file:///tmp" />
+  <project name="mirror.git" path="packages/phosphor" remote="phosphor" revision="refs/heads/main" />
+</manifest>

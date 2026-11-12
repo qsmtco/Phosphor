@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="aosp" fetch="https://android.googlesource.com" />
+  <default remote="aosp" revision="refs/tags/x" />
+  <project name="platform/build" path="build" />
+  <project name="platform/frameworks/base" path="frameworks/base" />
+</manifest>

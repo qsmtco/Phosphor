@@ -1,0 +1,100 @@
+[line 120 of docs/specs/P5-S4-agentd-skeleton.md]
+120|
+121|| Artifact | Path |
+122||---|---|
+123|| Module + source | `<tree>/packages/phosphor/services/PhosphorAgentd/{Android.bp, src/main.rs}` |
+124|| init config | `<tree>/packages/phosphor/init/phosphor_agentd.rc` |
+125|| Shared constants (socket path, framing, health file) | `<tree>/packages/phosphor/services/PhosphorIpc/` (created here as headers/constants; S7 fills the AIDL/wire types) |
+126|| Private data dir | `/data/misc/phosphor/` (created at runtime, `0700`, typed `phosphor_agentd_data_file` by S2) |
+127|| Policy artifact | `/system/etc/phosphor/risk-policy.json` (staged by S1) |
+128|| Health file | `/data/misc/phosphor/health` (written at runtime) |
+129|
+130|---
+131|
+132|## 4. Acceptance criteria
+133|
+134|**A1 — Starts on normal boot.** After the S3-approved normal boot (`sys.phosphor.safeboot=0`):
+135|```bash
+136|adb shell getprop init.svc.phosphor_agentd     # -> running
+137|adb shell pidof phosphor-agentd                # -> one pid
+138|adb shell getprop sys.phosphor.safeboot        # -> 0
+139|```
+140|Pass = all three. Plus `logcat -d -s phosphor-agentd | head` shows the `start` line with `safeboot=0`.
+141|
+142|**A2 — Absent in safe boot.** The S3 A1 boot (`persist.phosphor.safeboot=1`):
+143|```bash
+144|adb shell getprop init.svc.phosphor_agentd     # -> absent
+145|adb shell pidof phosphor-agentd                # -> empty
+146|logcat -d -s phosphor-agentd                   # -> empty (it never ran, not even to refuse)
+147|```
+148|Pass = absent/empty. **`stopped` is a failure** (it would mean init started it and it exited — i.e. the trigger fired).
+149|
+150|**A3 — Zero capabilities, proven not asserted.**
+151|- `rg -n 'capabilities|android:permission' packages/phosphor/services/PhosphorAgentd packages/phosphor/init/phosphor_agentd.rc` → only comment lines.
+152|- On device: `adb shell dumpsys package` shows no `com.phosphor.agentd` package (there is none — it is a binary).
+153|- `logcat -b all -d | grep 'avc: *denied' | grep phosphor_agentd` → empty.
+154|- **Policy-side proof:** the compiled policy contains no `allow phosphor_agentd …:binder call` except toward `phosphor_broker`, and no `set` on any property.
+155|
+156|**A4 — Restart on kill.**
+157|```bash
+158|adb shell 'pid=$(pidof phosphor-agentd); kill -9 $pid'
+159|sleep 3; adb shell getprop init.svc.phosphor_agentd   # -> running
+160|adb shell pidof phosphor-agentd                        # -> a NEW pid
+161|```
+162|Pass = running with a different pid, and `logcat` shows a second `start` line with a later timestamp. No `onrestart` hot-loop; exactly one restart per kill.
+163|
+164|**A5 — Fail-closed on missing/unparseable policy.** Device or lab:
+165|- Rename/mask the artifact in a test build (or point `--policy` at a nonexistent path in a host-run unit test) ⇒ the daemon logs `policy_error`, exits non-zero, does **not** create the socket, and init retries (observed as an init restart, and once the crash-loop backoff trips, the `crashloop` marker appears).
+166|- Pass = no socket file, `policy_error` logged, `health` carries `crashloop` after the pattern.
+167|
+168|**A6 — Socket is peer-restricted and framed.**
+169|- `adb shell ls -l /data/misc/phosphor/agentd.sock` → `srw------- phosphor_agentd phosphor_agentd`.
+170|- From a shell that is **not** `phosphor_shell` (`adb shell`): connect attempt is accepted by the kernel then `peer_rejected` logged with the caller's uid and the connection closed. (S4 does not implement a full client, so this is checked with `socat`/`nc -U` or S7's test tool — if the tool does not exist yet, the check is deferred to S7 **and recorded as deferred**, not skipped silently.)
+171|- Oversized frame ⇒ closed + `peer_rejected`.
+172|
+173|**A7 — Structured log vocabulary present.** Each of `start`, `policy_loaded`, `socket_listening`, `shutdown` observed in one session. `peer_rejected` observed in A6. Field names exactly as §2.3.
+174|
+175|**A8 — Health surface readable.** `/data/misc/phosphor/health` contains `pid`, `started_at`, `policy_version`, `last_frame_at`, is `0600 phosphor_agentd`, and its `pid` matches `pidof`. (Consumption by `phosphor-ctl` is S8's acceptance; S4 only proves the file.)
+176|
+177|**A9 — No secret-path reads, no property writes.** `avc` denials empty (A3) **and** the daemon's own log shows no attempt. Static: `rg -n '/data/misc/keystore|/data/adb|/data/local/tmp|credentials' packages/phosphor/services/PhosphorAgentd` → comments only.
+178|
+179|**A10 — Shell-dead resilience is not regressed.** With the shell app force-stopped (`am force-stop com.phosphor.shell`), agentd remains `running` and logs no fatal. (Architecture §2.2's crash-safe home has two halves; S4 owns this half.)
+180|
+181|---
+182|
+183|## 5. Edge cases
+184|
+185|| Case | Required behaviour |
+186||---|---|
+187|| `class_start core` regression (service not `disabled`) | §2.2's self-check refuses and logs `exit_refused_start`. A regression test: manually `adb shell start phosphor_agentd` in safe boot ⇒ refuses, `init.svc` returns to `stopped`, agentd absent from `pidof`. |
+188|| `sys.phosphor.safeboot` unreadable by agentd | It holds `get_prop` (S2). If a build regression removes it, the read returns empty ⇒ **not `0` ⇒ refuse**. Fail-closed preserved. Record this as the intended behaviour, not a bug. |
+189|| Property flips to `1` while running | No `on property:` stop trigger exists (safe boot is a **boot** decision, §6.5). agentd keeps running; the *next* boot is gated. Do **not** add a live stop trigger — that would create an in-session kill switch writable by a property, and no domain may write it anyway. |
+190|| `/data/misc/phosphor/` exists with wrong owner/mode | Fix mode if owned by us; if owned by someone else ⇒ fatal exit (init restarts; do not silently adopt a foreign directory). |
+191|| Stale socket file from a killed run | Unlink before bind — but only if it is a socket we own; never `unlink` a non-socket path (a symlink planted there would be an attack). |
+192|| Two agentd instances | init enforces one. Belt-and-braces: the bind fails for the second ⇒ fatal exit, logged. |
+193|| Filesystem full (logd/dir) | Log is best-effort; the *socket* creation failure is fatal (fail-closed). Do not run brainless. |
+194|| `SIGTERM` from init on shutdown | Clean: unlink socket, log `shutdown`, exit 0. Timeout ≤ 2 s. |
+195|| Shell connects from a different netns/user | `SO_PEERCRED` uid+label check rejects. |
+196|| Policy artifact present but `policy_version` missing | `policy_error` ⇒ fatal (same as unparseable) — §6.3(2) makes a missing version a deny, and a brain that cannot classify must not exist. |
+197|
+198|---
+199|
+200|## 6. Definition of done / auditor checklist
+201|
+202|- [ ] A1–A10 pass; A1/A2 reuse S3's approved boots (no new device operation is required by S4; A4's kill is a non-destructive in-session action on an already-approved build — if policy treats any `adb` interaction as a device operation, PM approval is obtained first).
+203|- [ ] `.rc` matches §6.5: `disabled`, and the **only** start path is `on property:sys.phosphor.safeboot=0`.
+204|- [ ] Self-check §2.2 present and demonstrated (A/A5 row 1).
+205|- [ ] Zero capabilities — proven statically **and** by empty avc denials.
+206|- [ ] Log vocabulary exactly §2.3, with no secret-bearing fields.
+207|- [ ] Socket: `SOCK_SEQPACKET`, `0600`, `SO_PEERCRED` uid **and** label check, bounded frames, clean shutdown.
+208|- [ ] Health file written; crash-loop backoff implemented and demonstrated.
+209|- [ ] Policy fail-closed (missing/unparseable/absent-version) demonstrated.
+210|- [ ] Turn/classifier/quarantine/transcript surfaces present as **named stubs**, so later phases extend without reshaping the process.
+211|
+212|## 7. Open items created by this spec
+213|
+214|1. Rust vs C++ for the daemon skeleton — builder, recorded in the completion note (Rust is the architecture's direction).
+215|2. Max frame size (§2.5) and whether the screen payload needs chunking — gates S7's wire design.
+216|3. Network policy rule for agentd is **deliberately absent** until the model client lands; the missing rule must be recorded so a later phase does not mistake it for a forgotten grant.
+217|4. The `onrestart` shape actually used (§2.1 note) — builder.
+218|5. Health-file schema becomes S8's contract; freeze the field names here.

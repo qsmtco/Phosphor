@@ -1,0 +1,122 @@
+[line 1 of docs/specs/P5-S5-shell-app.md]
+1|# P5-S5 — `PhosphorShell`: platform-signed HOME app (Phase 5 surface)
+2|
+3|**Phase:** 5 · **Spec ID:** P5-S5 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+4|**Status:** DRAFT — awaiting PM approval.
+5|**Depends on:** **P5-S1** (module `PhosphorShell`, `/system/app/PhosphorShell/`, `product_packages.txt` entry), **P5-S2** (`phosphor_shell` domain, `seapp_contexts` entry, `get_prop(appdomain, phosphor_safeboot_prop)`, no read on the policy artifact), **P5-S3** (`sys.phosphor.safeboot` written fail-closed on every boot; S5's hand-off polarity is only *correct* if keygate writes it).
+6|**Blocks:** the visible half of **S8**'s exit checklist, and Phase 6 (which fills the rendering surface into this skeleton). Does not block S6/S7.
+7|**Authority:** architecture §1.1 (renderer choice + kiosk constraints + WebView hardening set), §1.2 ("Launcher3 installed, not default; default resolves to PhosphorShell **except in safe boot**"), §4 / §4.1 (subresource policy; §4.1 Layer 2 is a MUST and lives in this app), §6.5 ("Plain surface" bullet + NEW-1's polarity), §8's map (shell box: "safe-boot: starts stock launcher by component and finishes"; "no binder server; socket client"), §2.1 (shell holds **exactly one** capability permission, `RECORD_AUDIO`).
+8|
+9|---
+10|
+11|## 1. Scope
+12|
+13|Make Phosphor the device's **HOME** on a normal boot and **get out of the way** on a safe boot — the two halves of one mechanism (NEW-1), plus a hardened WebView whose subresource allow-list is real but whose *content* pipeline is a stub until Phase 6.
+14|
+15|Delivered in S5:
+16|
+17|1. `AndroidManifest.xml` with `HOME` + `DEFAULT` categories, platform-signed, privileged, `RECORD_AUDIO` **only**.
+18|2. `MainActivity` with the **fail-closed hand-off**: hand off to the stock launcher **unless `sys.phosphor.safeboot` definitively reads `0`**.
+19|3. WebView hardening exactly per §1.1/§4.1 Layer 2: `setAllowFileAccess(false)`, no universal access from file URLs, `JavaScriptEnabled(true)`, `setBlockNetworkLoads(true)`, and a `shouldInterceptRequest` that **denies every scheme except `data:`** with a synthetic empty response.
+20|4. The CSP injection into the screen document head (§4.1 Layer 2, shell-injected, never model-emitted).
+21|5. `addJavascriptInterface` exposing **only** `phosphorApi`, method-whitelisted, with every method returning `NOT_IMPLEMENTED` in S5.
+22|6. A **stub screen**: a single locally-assembled HTML document rendered through the same hardened path, showing boot state. No agent connection.
+23|7. The socket-client seam (§8: shell connects to agentd) — a named, non-functional stub in S5, implemented in S7.
+24|
+25|### Non-goals
+26|
+27|- **No rendering pipeline**: no agentd connection, no turn, no transcript, no TTS, no STT, no mic capture (the `RECORD_AUDIO` permission is *declared* — §2.1 fixes it — but not *used* in S5; a declared-but-unused dangerous permission is recorded, not silently granted at runtime).
+28|- No approval card (§6.2: broker-hosted, never in the page — S6).
+29|- No `phosphorApi` proxy to the broker (S7).
+30|- No launcher features: no app list, no notification surface, no settings entry.
+31|- No `/data` state.
+32|
+33|---
+34|
+35|## 2. Behaviour contract
+36|
+37|### 2.1 The fail-closed hand-off (the polarity, exactly)
+38|
+39|On `MainActivity.onCreate()`, **before** any UI work:
+40|
+41|```
+42|v = read sys.phosphor.safeboot        // app-layer read, S2's get_prop(appdomain, …)
+43|if (v does not exist)          -> hand off     // absent
+44|if (v is not parseable as 0|1)  -> hand off     // unparseable
+45|if (v != "0")                   -> hand off     // 1
+46|if (v == "0")                   -> continue as HOME
+47|```
+48|
+49|- **Hand off = start the stock launcher by explicit component, then `finish()` this activity.** Explicit component, **not** an implicit `ACTION_MAIN`/`CATEGORY_HOME` intent: an implicit intent would re-enter *this* activity (we are the resolved HOME) and loop.
+50|- The component to hand off to is resolved **once** from `PackageManager.queryIntentActivities` for `CATEGORY_HOME`, filtered to exclude our own package, and the *first* non-Phosphor candidate is started. If **zero** candidates exist, that is a platform build defect: log it, show the minimal fallback UI (a plain `TextView` stating "Phosphor: safe boot, no launcher present"), and **do not crash**. `[VERIFY AT BUILD: the stock launcher's package/activity on this GrapheneOS tree — PROJECT-STATUS §9 says GrapheneOS apps are named by module, and Launcher3's package must be read out of the manifest, not assumed; record it. Architecture §1.2/§6.5 name it "Launcher3/Graphene launcher".]`
+51|- **The check must not be defeatable by the app layer's own failure**: any exception during the property read ⇒ hand off (catch, do not propagate).
+52|- The read happens in `onCreate` **and** in `onNewIntent`/`onResume` when returning to the activity, so a stale resumed activity cannot re-become the surface after a safe-boot boot. (Cheap, idempotent; the property only changes across boots, so this is belt-and-braces — record that it is *not* a live kill switch, matching S4's §5 row 3.)
+53|
+54|**Why the polarity is inverted from the intuitive form — state it in the code comment (NEW-1):** "hand off when set" makes an absent or invisible property leave Phosphor rendering as HOME with no agent, which is exactly the opposite of REC-2's plain surface. The two halves of the mechanism must share polarity with agentd's `on property:…=0` start, so **absent ⇒ down** on both sides.
+55|
+56|### 2.2 Manifest contract
+57|
+58|```xml
+59|<manifest package="com.phosphor.shell" android:versionCode="1" android:versionName="p5">
+60|  <uses-permission android:name="android.permission.RECORD_AUDIO"/>   <!-- exactly one -->
+61|
+62|  <application android:label="Phosphor">
+63|    <activity android:name=".MainActivity"
+64|              android:exported="true"
+65|              android:launchMode="singleTask"
+66|              android:excludeFromRecents="true">
+67|      <intent-filter>
+68|        <action android:name="android.intent.action.MAIN"/>
+69|        <category android:name="android.intent.category.HOME"/>
+70|        <category android:name="android.intent.category.DEFAULT"/>
+71|      </intent-filter>
+72|    </activity>
+73|  </application>
+74|</manifest>
+75|```
+76|
+77|- `Android.bp`: `android_app` with `platform_apis: true`, `certificate: "platform"`, `privileged: true`, `overrides:` nothing.
+78|- **No `<service>`, no `<receiver>`, no `<provider>`, no `BIND_*` permission, no exported second component.** S5's surface is one activity. (Audit hook: A6 greps the merged manifest.)
+79|- **No** `RECORD_AUDIO` runtime request in S5. The permission is declared because §2.1 fixes the shell's capability set; using it is Phase 6/7. The completion note states this explicitly so an auditor does not read a declared permission as an exercised one.
+80|
+81|### 2.3 WebView hardening (MUST, §1.1 + §4.1 Layer 2)
+82|
+83|Set on the single `WebView` instance, before `loadData`:
+84|
+85|| Setting | Value | Source |
+86||---|---|---|
+87|| `setJavaScriptEnabled` | `true` | R-UI-2; §1.1 (unchanged in content) |
+88|| `setAllowFileAccess` | `false` | §1.1, §4.1 |
+89|| `setAllowFileAccessFromFileURLs` | `false` | §1.1 "no universal access from file URLs" |
+90|| `setAllowUniversalAccessFromFileURLs` | `false` | §4.1 |
+91|| `setBlockNetworkLoads` | `true` | §1.1, §4.1 |
+92|| `setAllowContentAccess` | `false` | not named in §1.1; a strict extension — **mark it as an added restriction** so it is not read as §1.1's content |
+93|| `setDomStorageEnabled` | `false` (Phase 5) | no state in S5; re-enabling is a Phase 6 decision |
+94|| `setMediaPlaybackRequiresUserGesture` | `true` | default; stated so it is not accidentally relaxed |
+95|| `setMixedContentMode` | `MIXED_CONTENT_NEVER_ALLOW` | defence in depth with `blockNetworkLoads` |
+96|| `setSafeBrowsingEnabled` | `false` | screens are local and `data:`-only; enabling it would send hashes to a remote service — **contradicts `connect-src 'none'` / no-network posture** |
+97|
+98|`shouldInterceptRequest(view, request)`:
+99|
+100|```
+101|if (scheme(request.url).equalsIgnoreCase("data")) return null;      // allow the default handling
+102|else { log("phosphor-shell: subresource blocked: " + scheme + ":"); return syntheticEmptyResponse(); }
+103|```
+104|
+105|- **Allow-list is `data:` only.** Not `file:`, not `content:`, not `about:` (blank/about URLs are navigations, not subresources; if one appears here it is blocked and logged).
+106|- **Scope, stated so it is not later read as a bug (NEW-5):** the allow-list governs the **agent WebView only**. **No shell-side view ever loads remote content into it** — no link preview, no remote thumbnail, no embedded document. Remote content the user must *see* performs an explicit hand-off to the Vanadium browser (§4.1's renderer isolation note). Any future in-WebView remote fetch is a named, reviewed exception added here — never a relaxation of this list.
+107|- The synthetic response is a valid empty `WebResourceResponse` (`200`, empty body) so the page does not hang, and the block is logged as a **visible system note** in the transcript per §4.1 Layer 1's "truthful signal" principle — in S5, "transcript" is the stub screen's note area.
+108|- `WebViewClient` must **not** override `shouldOverrideUrlLoading` to permit anything: any main-frame navigation attempt away from `data:` is refused outright (return `true`, log).
+109|
+110|### 2.4 CSP injection (§4.1 Layer 2)
+111|
+112|The shell, **not the model and not the stub page**, injects into the document head:
+113|
+114|```
+115|default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';
+116|img-src data:; font-src data:; connect-src 'none'; frame-src 'none';
+117|form-action 'none'; base-uri 'none'
+118|```
+119|
+120|- Implementation: `loadDataWithBaseURL(null, injectedHtml, "text/html", "utf-8", null)` after inserting `<meta http-equiv="Content-Security-Policy" content="…">` as the **first** element of `<head>`. A `<meta>` CSP is only honoured if it appears in `<head>`; injecting it after content defeats it.
+[... truncated; continue with line=121 ...]

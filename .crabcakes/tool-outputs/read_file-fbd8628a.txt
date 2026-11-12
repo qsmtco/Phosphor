@@ -1,0 +1,112 @@
+[line 1 of docs/specs/P5-S6-broker-app.md]
+1|# P5-S6 — `PhosphorBroker`: standalone platform-signed app (empty capability surface + approval-card host)
+2|
+3|**Phase:** 5 · **Spec ID:** P5-S6 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+4|**Status:** DRAFT — awaiting PM approval.
+5|**Depends on:** **P5-S1** (`PhosphorBroker` module, `/system/app/PhosphorBroker/`), **P5-S2** (`phosphor_broker` domain, `seapp_contexts`, `r_file_perms` on `phosphor_risk_policy_file` and **no write**, `neverallow` on the artifact), **P5-S4** (agentd must be alive to prove the bind path).
+6|**Blocks:** nothing in Phase 5 downstream — **S7's broker binder surface** builds on this app, and S8's checklist references the card. Phase 8's real classifier and Phase 9's capabilities fill the surface left deliberately empty here.
+7|**Authority:** architecture §9 **OQ-4 DECIDED** ("standalone platform-signed app; escalate … only if a specific capability demands it") and **OQ-3 DECIDED** (broker-hosted approval card); §6.2 (`[ADAPTED FROM SPEC-002 REC-3]` — card native, system-verified, content from the registry, renders even if the WebView is dead); §10.1 Z3 (may hold §3 permissions, must never exceed §3's surface / write the artifact / classify more weakly than agentd); §8's map (broker box); §3 (**the single source** for the permission set — MAJOR-5: "a list restated elsewhere is what let rev 1's errors propagate").
+8|
+9|---
+10|
+11|## 1. Scope
+12|
+13|Stand up the broker **as a process and an app**, at the hosting shape the Captain ruled, with an **empty capability surface** and a **working approval card host**:
+14|
+15|1. A launchable platform-signed `android_app`, package `com.phosphor.broker`, installed `/system/app/PhosphorBroker/`, privileged.
+16|2. A **bound binder service** (`PhosphorBrokerService`) with a minimal AIDL surface: `ping()`, `policyVersion()`, `submitForApproval(request)` → `decision`, `cancel(token)`.
+17|3. The **pending-approval registry**: single-use, 5-min TTL, keyed to the originating session (§6.2/R-GATE-6) — real in S6, because the card must render *from* it.
+18|4. The **approval card**: a platform-styled native dialog built from the registry entry, showing the exact tool call (method + arguments as a system-verified string), with Approve/Deny. **It must render with the shell dead.**
+19|5. Policy-artifact read + `policy_version` check, fail-closed on missing/unparseable/mismatched version (§6.3(2)).
+20|6. **Zero Android capability permissions granted** in S6 — the §3 set is a *Phase 9* manifest task, and granting it now would create a privileged surface with nothing behind it. This is the "empty capability surface" the Supervisor's order names.
+21|
+22|### Non-goals
+23|
+24|- **No capability execution.** No telephony, SMS, contacts, notifications, settings, audio, sensors, location, camera, Bluetooth, clipboard, torch, vibrator, apps, files. Not one row of §3 is implemented in S6.
+25|- **No §3 permissions declared.** See §2.3 for the enforcement of this and the recorded reason.
+26|- No classifier (Phase 8). S6 reads the artifact for its **version** and fails closed; it does not classify.
+27|- No agentd→broker AIDL binding from agentd's side (S7). S6 proves the *service* binds from the shell/agentd path.
+28|- No notification-listener overlay entry (§3 `notif.listen`, Phase 9).
+29|- No device operation beyond what S3/S4 already approved (see §6).
+30|
+31|---
+32|
+33|## 2. Behaviour contract
+34|
+35|### 2.1 Hosting shape and lifecycle (C2 — OQ-4 DECIDED)
+36|
+37|- `android_app`, `platform_apis: true`, `certificate: "platform"`, `privileged: true`, `minSdk` per tree.
+38|- `PhosphorBrokerService` is a **bound** service, `android:exported="false"` plus an explicit signature-level `android:permission="com.phosphor.permission.BROKER"` defined by the app itself with `protectionLevel="signature"` — two independent gates (exported + signature permission), so only platform-signed callers can bind.
+39|- **Starts on shell/agentd bind; survives agent death** (§2.2: "starts on shell bind; survives agent death so pending approvals are not lost"). Binding, not `START_STICKY` from boot: the broker must **not** auto-start in safe boot (§6.5: "`PhosphorBroker` likewise does not auto-start"). Consequence to state: in S6 the broker is not running until something binds — and in safe boot nothing binds, which is the required behaviour.
+40|- The approval card's Activity is `exported="false"`, launched by the service with `FLAG_ACTIVITY_NEW_TASK` from a **broker process context**, so it renders without the shell.
+41|
+42|### 2.2 AIDL surface (S6-minimal, S7 extends)
+43|
+44|```aidl
+45|interface IPhosphorBroker {
+46|  int ping();
+47|  String policyVersion();
+48|  ParcelableDecision submitForApproval(in ApprovalRequest request);
+49|  void cancel(long token);
+50|}
+51|```
+52|
+53|- `ApprovalRequest` carries: `sessionId`, `method`, `argsJson` (the exact call), `classification` (`SAFE|DESTRUCTIVE|DESTRUCTIVE-READ` — the **closed enum**, §6.3/MAJOR-7; no other name ever appears), `policyVersion`.
+54|- `Decision` = `APPROVED | DENIED | EXPIRED | NOT_IMPLEMENTED | VERSION_MISMATCH`.
+55|- **No method in S6 executes anything.** The contract is that a `submitForApproval` for a real capability returns `NOT_IMPLEMENTED` **after** the card flow, so the UI path is exercised while capability surface stays empty. The alternative (short-circuit to `NOT_IMPLEMENTED` before the card) would leave the card untested — the one thing S6 exists to prove.
+56|- `SAFE` handling in S6: also `NOT_IMPLEMENTED` (execution is Phase 8/9), and **no card** is shown — `SAFE` never prompts (§6.3, R-GATE-2).
+57|- `DESTRUCTIVE-READ` is **never auto-approved by any policy entry** (§6.3) — S6 must reflect that even though nothing executes: the code path may not contain an auto-approve branch for it.
+58|
+59|### 2.3 Permission surface: empty, and provably so
+60|
+61|- `AndroidManifest.xml` declares **zero** `<uses-permission>` entries in S6. Not one row of §3.
+62|- **Why:** §3's inventory is the Phase 9 build deliverable, and several rows are `dangerous`+`hardRestricted` (`READ_SMS`/`SEND_SMS`, MAJOR-4) requiring allowlist entries in our tree — a build deliverable that cannot be verified until the capability exists. Declaring the set now would ship a privileged app holding telephony/SMS/contacts grants with no code behind them: an unused-privilege surface, and the exact shape that MAJOR-5 says lets errors propagate.
+63|- **The empty surface is audited, not asserted:** A5 greps the merged manifest and the APK, and A7 requires that the §3 rows are listed in the completion note as **Phase 9 deferred**, row by row, so nothing looks forgotten. `wifi.toggle`'s system-app requirement (MINOR-6) is satisfied *structurally* by the OQ-4 shape (privileged platform app) — record that this is a precondition met, not a capability delivered.
+64|
+65|### 2.4 The pending-approval registry (real, not stubbed)
+66|
+67|- In-memory, per-process; entries keyed by a monotonic `long token`; each entry records `sessionId`, `method`, `argsJson`, `classification`, `createdAt`.
+68|- **Single-use**: a decision consumes the entry; a second `submitForApproval` with the same token/request creates a new entry (no idempotent re-approve).
+69|- **TTL 5 minutes** (§6.2, R-GATE-6): a timed sweep marks stale entries `EXPIRED` and the waiting call returns `EXPIRED`, which the caller maps to the "user declined" tool result (R-GATE-7) — the *mapping* is Phase 8, the *expiry* is S6.
+70|- **Denial-as-tool-result** (§5 step 4, R-GATE-3/6/7): `DENIED` is a returned decision, not an exception/throw. State it because a throw is how this gets lost.
+71|- The registry **survives agent death** because it lives in the broker process; a `RemoteException` from the caller is caught and the entry is left to expire rather than being leaked or auto-approved.
+72|- **Kill-switch property the card depends on:** the entry is snapshotted into an immutable string at submit time; the card renders **only** from that snapshot, never from a live page, never from a caller-supplied late binding (§6.2: "system-verified content, never page/script scope"; P5-H1 invariant).
+73|
+74|### 2.5 The card (OQ-3 DECIDED — broker-hosted)
+75|
+76|- A native dialog (`AlertDialog` with platform theme, or a `DialogFragment` — record which) in the **broker** process, showing:
+77|  - the exact method (e.g. `sms.send`) and the exact arguments (`argsJson`, pretty-printed, truncated with an explicit "…truncated, N bytes" marker rather than silently clipped);
+78|  - the risk class, **verbatim** from the closed enum;
+79|  - Approve / Deny buttons; **no** "always allow", no "remember".
+80|- Renders **even if the shell is dead/broken/attacker-influenced** — proven by §4 A4 (force-stop the shell, then trigger a card).
+81|- A card must never be launched from a background *service* context in a way Android silently drops: use a full-screen-Intent-permitted or `ACTIVITY_NEW_TASK` launch with the broker's own activity; if the platform blocks background activity starts, the fallback is a high-priority notification **plus** the same registry entry — record which path was taken and why. **If the card cannot render, the capability is not gated and the design fails**, so this is a stop-the-line item (see A4's failure clause).
+82|- SysUI/theme: platform-styled, not agent-styled. The card is **not** HTML and must not be rendered by the WebView (§10.1 Z1 "must never render an approval card").
+83|
+84|### 2.6 Policy artifact: read for version, fail closed
+85|
+86|- Read `/system/etc/phosphor/risk-policy.json` at first bind; extract `policy_version`.
+87|- Missing / unparseable / **not equal to the build-stamped version** ⇒ every `submitForApproval` returns `VERSION_MISMATCH` (**deny**), an audit event is logged, and `policyVersion()` returns the observed (untrusted) value or `"<invalid>"` for diagnostics. §6.3(2) verbatim: "Broker refuses if `policy_version` is missing, unparseable, or not the build-stamped version → **deny** (fail closed), and log an audit event."
+88|- The build-stamped version is compiled in (`BuildConfig`/`--define`), not read from the same file it validates — otherwise the check is circular and always passes. Call this out: it is the difference between a check and a ritual.
+89|- Broker has **read** on the artifact and **no write** (S2 `neverallow`, NEW-4). S6 must not contain a code path that writes it.
+90|
+91|### 2.7 Audit logging (§6.7)
+92|
+93|Every classification decision the broker sees, every approval, denial, expiry, and version mismatch → structured log (`logcat`, tag `phosphor-broker`) **and** a durable append in the broker's private dir (`/data/data/com.phosphor.broker/audit.log`, `0600`). Redaction: `argsJson` is logged only as a **hash** plus a method name; the card shows the full string to the *human* but the audit store does not retain payloads (R-SEC-4 at save time; §6.7). Record this asymmetry explicitly — it is deliberate.
+94|
+95|### 2.8 What the broker must never do (audited against Z3)
+96|
+97|- Never exceed the §3 API surface (S6: does not implement any of it).
+98|- Never write the policy artifact.
+99|- Never classify more weakly than agentd (§6.3 fail-closed order; Phase 8 enforces it — S6 must not create a "SAFE" shortcut that would later excuse a weaker classification; the enum comparison `DESTRUCTIVE-READ > DESTRUCTIVE > SAFE` is the shape).
+100|- Never render an approval card inside the WebView, never accept a card's content from the caller after submit time.
+101|- Never auto-start at boot (safe boot must have no broker).
+102|
+103|---
+104|
+105|## 3. Implementation location
+106|
+107|| Artifact | Path |
+108||---|---|
+109|| Module + manifest | `<tree>/packages/phosphor/apps/PhosphorBroker/{Android.bp, AndroidManifest.xml}` |
+110|| Bound service | `…/PhosphorBrokerService.java` (broker process context) |
+[... truncated; continue with line=111 ...]

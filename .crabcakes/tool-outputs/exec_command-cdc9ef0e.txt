@@ -1,0 +1,77 @@
++| `wifi.status` / `wifi.list` | `WifiManager.getConnectionInfo()` / `getScanResults()` (scan via `startScan()`) | `ACCESS_FINE_LOCATION` — `dangerous`; `NEARBY_WIFI_DEVICES` — **`dangerous`** (verified in tree, `frameworks/base/core/res/AndroidManifest.xml:2685`) | broker | `SAFE` | — |
++| `wifi.toggle` | `WifiManager.setWifiEnabled()` — **`@Deprecated`; for Q+ targets always fails and returns false unless DO/PO/system app** | same as above | broker | `DESTRUCTIVE` | **requires the broker to actually be a system app** — satisfied by the OQ-4 ruling (standalone platform-signed app), and independently an argument for it (audit MINOR-6) |
+ | `airplane.toggle` | `ConnectivityManager.setAirplaneMode(boolean)` — `@SystemApi` | `NETWORK_AIRPLANE_MODE` — **`signature`** | broker | `DESTRUCTIVE` | — |
+ | `brightness` | `Settings.System.putInt(SCREEN_BRIGHTNESS)` | `WRITE_SETTINGS` — **`signature\|preinstalled\|appop\|pre23\|role`** (this is **not** `WRITE_SECURE_SETTINGS`) | broker | `SAFE` — **explicit carve-out** in §6.3 (reconciling rev 1's self-contradiction) | — |
+ | `screen.idle` / `screen.wake` | `PowerManager.goToSleep(long,int,int)` / `wakeUp()` | `DEVICE_POWER` — **`signature\|role`** (rev 1's "`WindowManager` attrs" was wrong) | broker | `SAFE` — explicit carve-out (a screen nap is recoverable and non-consequential) | — |
+ | *(generic secure-settings write, not a prototype method)* | `Settings.Global` / `Settings.Secure` put | `WRITE_SECURE_SETTINGS` — `signature\|privileged\|development\|role\|installer` | broker | `DESTRUCTIVE` **unless the key is on the policy file's allowlist** | allowlist of writable keys in the policy artifact |
+ | `tts.speak` | `TextToSpeech.speak(...)` | none (engine binding) | broker | `SAFE` | — |
+-| `audio.route` *(generalises prototype absence)* | `AudioManager.setMode` / `setSpeakerphoneOn` | `MODIFY_AUDIO_SETTINGS` — `normal`; some routing modes `MODIFY_AUDIO_ROUTING` — `[TO VERIFY IN TREE]` | broker | `SAFE` outside a call; `DESTRUCTIVE` during an active call | — |
++| `audio.rou
+[... 17253 chars omitted ...]
+le on day one of Phase 5 and satisfies REC-2's "reachable without the agent's cooperation" from the first bootable Phosphor image.
+ 
+@@ -359,27 +362,25 @@ Vision rule (design law): **dead network ≠ dead mic ≠ dead phone.**
+ │              │                                                      │  verifies SO_PEERCRED)     │
+ │              ▼                                                      ▼                            │
+ │  ┌─ PhosphorBroker ─────────────────────────────────────┐  ┌─ PhosphorShell (system app, HOME) ─┐ │
+-│  │ AID_PHOSPHOR_BROKER (provisional — OQ-4 open)        │  │ AID_PHOSPHOR_SHELL                │ │
++│  │ AID_PHOSPHOR_BROKER (spelling provisional;           │  │ AID_PHOSPHOR_SHELL                │ │
++│  │   OQ-4 DECIDED: standalone platform-signed app)      │  │                                   │ │
+ │  │ u:r:phosphor_broker:s0                                │  │ u:r:phosphor_shell:s0             │ │
+ │  │ • AIDL services: Tel · Sms · Contacts · Notif ·       │  │ • fullscreen WebView (Vanadium     │ │
+ │  │   Settings · Audio · Sensor · Location · Camera ·     │  │   WebView engine — signature is    │ │
+-│  │   App · Bluetooth · Clipboard · Torch · Vibrator      │  │   GrapheneOS's, see OQ-1)          │ │
+-│  │ • holds §3's permission set (the one source)           │  │ • §4.1 Layer 2: blockNetworkLoads, │ │
+-│  │   shell holds RECORD_AUDIO only, nothing else         │  │   shouldInterceptRequest allow-list,│ │
+-│  │ • pending-approval registry (single-use, 5-min TTL)   │  │   injected CSP                     │ │
+-│  │ • re-checks classification against the SAME policy    │  │ • exposes ONLY `phosphorApi` via   │ │
+-│  │   artifact; fails closed on version mismatch          │  │   addJavascriptInterface (proxy)   │ │
+-│  │ • consumes notification-listener overlay entry        │  │ • holds exactly one capability     │ │
+-│  └───────────────────────────────────────────────────────┘  │   permission: RECORD_AUDIO         │ │
++│  │   App · Bluetooth · Clipboard · Torch · Vibrator      │  │   GrapheneOS's; OQ-1 DECIDED to    │ │
++│  │ • holds §3's permission set (the one source)           │  │   ride it, Phases 4–9)             │ │
++│  │   shell holds RECORD_AUDIO only, nothing else         │  │ • §4.1 Layer 2: blockNetworkLoads, │
++│  │ • pending-approval registry (single-use, 5-min TTL)   │  │   shouldInterceptRequest allow-list,│
++│  │ • native approval card — OQ-3 DECIDED: rendered here, │  │   injected CSP                     │
++│  │   from this registry, never from page scope           │  │ • exposes ONLY `phosphorApi` via   │ │
++│  │ • re-checks classification against the SAME policy    │  │   addJavascriptInterface (proxy)   │ │
++│  │   artifact; fails closed on version mismatch          │  │ • holds exactly one capability     │ │
++│  │ • consumes notification-listener overlay entry        │  │   permission: RECORD_AUDIO         │ │
++│  └───────────────────────────────────────────────────────┘  │                                   │ │
+ │              ▲                                              │ • safe-boot: starts stock launcher │ │
+ │              │ binder AIDL (phosphorApi RPCs)              │   by component and finishes (§6.5) │ │
+ │              └──────────────────────────────────────────────┤ • no binder server; socket client │ │
+ │                                                             └────────────────────────────────────┘ │
+-│  ┌─ [OQ-3 — OPEN] native approval dialog ───────────────────────────────────────────────────────┐ │
+-│  │  Content comes from the broker's registry in ALL cases (never page scope).                    │ │
+-│  │  Host = broker (recommended: renders with shell dead) OR shell (normal dialog machinery,      │ │
+-│  │  dies with shell). NOT DECIDED HERE. Phase 5 manifest/UI work depends on it.                  │ │
+-│  └──────────────────────────────────────────────────────────────────────────────────────────────┘ │
+ │                                                                                                    │
+ │  page JS ──(JavascriptInterface, method-whitelisted)──▶ PhosphorShell ──(binder AIDL)──▶ PhosphorBroker
+ │  PhosphorShell ◀──(AF_UNIX SOCK_SEQPACKET, SO_PEERCRED-verified)──▶ phosphor_agentd
+@@ -390,7 +391,9 @@ Vision rule (design law): **dead network ≠ dead mic ≠ dead phone.**
+ │                                                                                                    │
+ │  SAFE BOOT (§6.5): phosphor_keygate folds ro.boot.phosphor.safeboot (host-set, immutable),         │
+ │    the hardware key chord, and the set-only persist.phosphor.safeboot latch (absent→1 only; a      │
+-│    persist value of 0 cannot cancel a host-requested safe boot) into sys.phosphor.safeboot.        │
++│    persist value of 0 cannot cancel a host-requested safe boot — latch is set-only by POLICY, not │
++│    by a value check: no Phosphor domain holds `set` on its type, and clearing it is symmetric      │
++│    with setting it for the one documented writer, the host (NEW-6) into sys.phosphor.safeboot.     │
+ │    =1 (or absent/unreadable) ⇒ init never starts phosphor_agentd; broker not auto-started;         │
+ │    shell hands off to the stock launcher by explicit component UNLESS the property is             │
+ │    definitively 0 — fail-closed on both halves. Result: launcher + Settings, no agent.             │
+@@ -399,7 +402,7 @@ Vision rule (design law): **dead network ≠ dead mic ≠ dead phone.**
+ ```
+ 
+ **Reconciliation notes (audit MAJOR-9 — map now agrees with §2.1/§5/§6.2):**
+-1. The approval dialog is drawn **outside** both process boxes as an explicitly open OQ-3 annotation. §6.2 keeps it open; the diagram no longer pre-decides shell-hosting.
++1. The approval dialog is **inside the broker's box**: OQ-3 was DECIDED (Captain, 2026-11-10) as broker-hosted, so the map draws the decided placement rather than a shared annotation. §6.2 states the ruling and the accepted consequence (the broker must be able to show UI, which is part of why OQ-4 is a standalone platform-signed app).
+ 2. The shell's permission line says **`RECORD_AUDIO` only**, matching §5 step 1, instead of claiming it holds no capability permissions.
+ 3. `phosphor_agentd` has **no binder permission to the shell**. Shell↔agentd is a `AF_UNIX` `SOCK_SEQPACKET` channel that the *shell* connects to, with agentd verifying `SO_PEERCRED` and the group/label. This removes rev 1's contradictory "neverallow … except to broker + shell".
+ 4. The shell↔agentd mechanism is **chosen, not left as "binder AIDL / local socket"**: a Unix socketpair, because a Rust daemon would otherwise have to implement the binder wire protocol or be fronted by a Java service, and because it gives length-framed messages with credential checks. Its trust properties are stated: the channel carries the turn and the render payload, is **outside** the broker's classifier, and is the reason §4.1 exists.
+@@ -410,8 +413,8 @@ Vision rule (design law): **dead network ≠ dead mic ≠ dead phone.**
+ - `neverallow phosphor_agentd { phosphor_broker }:binder call` — the *only* permitted binder target; nothing to the shell.
+ - `neverallow phosphor_shell` binder to capability services directly (broker or nothing).
+ - **The policy artifact gets a type.** It is a **JSON document** (`risk-policy.json`), stored as type **`phosphor_risk_policy_file`**; `neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } phosphor_risk_policy_file:file { write append create rename setattr unlink };` — read is deliberately allowed for agentd and broker (§6.3) and absent for shell, so this rule states the write ban against its named type rather than a vague "any Phosphor domain".
+-- **`phosphor_keygate`'s file access, stated as the permission checks it actually is** (NEW-3 — "touching the agent's binary" is not a SELinux predicate, so it is enumerated): `neverallow phosphor_keygate phosphor_agentd_exec:file *;` and `neverallow phosphor_keygate phosphor_agentd_data_file:file *;` — covering `execute`, `execute_no_trans`, `entrypoint`, `read`, `map`/`mmap_exec_file_perms`, `write`, `create`, `unlink`, `setattr` by denying the whole operation set on those two types.

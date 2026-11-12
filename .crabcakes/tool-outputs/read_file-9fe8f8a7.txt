@@ -1,0 +1,102 @@
+[line 338 of docs/PHASE-4-PLATFORM-ARCHITECTURE.md]
+338|## 8. Component and process map
+339|
+340|```
+341|┌────────────────────────── Pixel 8a · Phosphor image (GrapheneOS-derived) ─────────────────────────┐
+342|│  init (stock) ─▶ zygote / system_server (stock Android framework)                                 │
+343|│                                                                                                    │
+344|│  ┌─ phosphor_keygate (oneshot, class core, started `on late-init`) ─────────────────────────────┐ │
+345|│  │  UID AID_PHOSPHOR_KEYGATE · u:r:phosphor_keygate:s0 · no capability permissions               │ │
+346|│  │  reads: ro.boot.phosphor.safeboot (host-set, immutable) · hardware key chord · persist.*       │ │
+347|│  │  sets:  sys.phosphor.safeboot=0|1   (fail-closed: undecided ⇒ 1 = safe boot)                  │ │
+348|│  └───────────┬──────────────────────────────────────────────────────────────────────────────────┘ │
+349|│              │ sys.phosphor.safeboot=0  ⇒  init starts agentd                                       │
+350|│              ▼                                                                                     │
+351|│  ┌─ phosphor_agentd ────────────────────────────────────────────────────────────────────────────┐ │
+352|│  │  AID_PHOSPHOR_AGENTD · u:r:phosphor_agentd:s0 · `disabled`; started ONLY on                    │ │
+353|│  │  property:sys.phosphor.safeboot=0                                                             │ │
+354|│  │  • agent loop, tool schemas, model client (sole network egress)                              │ │
+355|│  │  • AUTHORITATIVE risk classifier (reads /system/etc/phosphor/risk-policy.json — read-only)    │ │
+356|│  │  • R-QUAR envelopes · R-SEC-4 redaction · audit store · §4.1 Layer-1 HTML normalisation      │ │
+357|│  │  • on-device STT (whisper.cpp) or client of phosphor-sttd                                    │ │
+358|│  │  • Android capability permissions: NONE (only network + policy-file read)                     │ │
+359|│  └───────────┬──────────────────────────────────────────────────────┬──────────────────────────┘ │
+360|│              │ binder AIDL (tool calls)                             │ AF_UNIX SOCK_SEQPACKET     │
+361|│              │                                                      │ (shell connects; agentd    │
+362|│              │                                                      │  verifies SO_PEERCRED)     │
+363|│              ▼                                                      ▼                            │
+364|│  ┌─ PhosphorBroker ─────────────────────────────────────┐  ┌─ PhosphorShell (system app, HOME) ─┐ │
+365|│  │ AID_PHOSPHOR_BROKER (spelling provisional;           │  │ AID_PHOSPHOR_SHELL                │ │
+366|│  │   OQ-4 DECIDED: standalone platform-signed app)      │  │                                   │ │
+367|│  │ u:r:phosphor_broker:s0                                │  │ u:r:phosphor_shell:s0             │ │
+368|│  │ • AIDL services: Tel · Sms · Contacts · Notif ·       │  │ • fullscreen WebView (Vanadium     │ │
+369|│  │   Settings · Audio · Sensor · Location · Camera ·     │  │   WebView engine — signature is    │ │
+370|│  │   App · Bluetooth · Clipboard · Torch · Vibrator      │  │   GrapheneOS's; OQ-1 DECIDED to    │ │
+371|│  │ • holds §3's permission set (the one source)           │  │   ride it, Phases 4–9)             │ │
+372|│  │   shell holds RECORD_AUDIO only, nothing else         │  │ • §4.1 Layer 2: blockNetworkLoads, │
+373|│  │ • pending-approval registry (single-use, 5-min TTL)   │  │   shouldInterceptRequest allow-list,│
+374|│  │ • native approval card — OQ-3 DECIDED: rendered here, │  │   injected CSP                     │
+375|│  │   from this registry, never from page scope           │  │ • exposes ONLY `phosphorApi` via   │ │
+376|│  │ • re-checks classification against the SAME policy    │  │   addJavascriptInterface (proxy)   │ │
+377|│  │   artifact; fails closed on version mismatch          │  │ • holds exactly one capability     │ │
+378|│  │ • consumes notification-listener overlay entry        │  │   permission: RECORD_AUDIO         │ │
+379|│  └───────────────────────────────────────────────────────┘  │                                   │ │
+380|│              ▲                                              │ • safe-boot: starts stock launcher │ │
+381|│              │ binder AIDL (phosphorApi RPCs)              │   by component and finishes (§6.5) │ │
+382|│              └──────────────────────────────────────────────┤ • no binder server; socket client │ │
+383|│                                                             └────────────────────────────────────┘ │
+384|│                                                                                                    │
+385|│  page JS ──(JavascriptInterface, method-whitelisted)──▶ PhosphorShell ──(binder AIDL)──▶ PhosphorBroker
+386|│  PhosphorShell ◀──(AF_UNIX SOCK_SEQPACKET, SO_PEERCRED-verified)──▶ phosphor_agentd
+387|│       carries: user text/audio in, normalised screen HTML + turn metadata out (not a capability path)
+388|│  phosphor_agentd ──(binder AIDL)──▶ PhosphorBroker  (tool calls, re-checked there)
+389|│  phosphor_agentd ──(network)──▶ model provider      [ONLY network egress path in Phosphor]
+390|│  agentd/broker/shell ──(private dirs / SQLite)──▶ /* phosphor data root: audit, histories, kv */
+391|│                                                                                                    │
+392|│  SAFE BOOT (§6.5): phosphor_keygate folds ro.boot.phosphor.safeboot (host-set, immutable),         │
+393|│    the hardware key chord, and the set-only persist.phosphor.safeboot latch (absent→1 only; a      │
+394|│    persist value of 0 cannot cancel a host-requested safe boot — latch is set-only by POLICY, not │
+395|│    by a value check: no Phosphor domain holds `set` on its type, and clearing it is symmetric      │
+396|│    with setting it for the one documented writer, the host (NEW-6) into sys.phosphor.safeboot.     │
+397|│    =1 (or absent/unreadable) ⇒ init never starts phosphor_agentd; broker not auto-started;         │
+398|│    shell hands off to the stock launcher by explicit component UNLESS the property is             │
+399|│    definitively 0 — fail-closed on both halves. Result: launcher + Settings, no agent.             │
+400|│  RECOVERY (REC-1): fastboot ladder, host+cable, wipes userdata — data gap = Phase 11.             │
+401|└────────────────────────────────────────────────────────────────────────────────────────────────────┘
+402|```
+403|
+404|**Reconciliation notes (audit MAJOR-9 — map now agrees with §2.1/§5/§6.2):**
+405|1. The approval dialog is **inside the broker's box**: OQ-3 was DECIDED (Captain, 2026-11-10) as broker-hosted, so the map draws the decided placement rather than a shared annotation. §6.2 states the ruling and the accepted consequence (the broker must be able to show UI, which is part of why OQ-4 is a standalone platform-signed app).
+406|2. The shell's permission line says **`RECORD_AUDIO` only**, matching §5 step 1, instead of claiming it holds no capability permissions.
+407|3. `phosphor_agentd` has **no binder permission to the shell**. Shell↔agentd is a `AF_UNIX` `SOCK_SEQPACKET` channel that the *shell* connects to, with agentd verifying `SO_PEERCRED` and the group/label. This removes rev 1's contradictory "neverallow … except to broker + shell".
+408|4. The shell↔agentd mechanism is **chosen, not left as "binder AIDL / local socket"**: a Unix socketpair, because a Rust daemon would otherwise have to implement the binder wire protocol or be fronted by a Java service, and because it gives length-framed messages with credential checks. Its trust properties are stated: the channel carries the turn and the render payload, is **outside** the broker's classifier, and is the reason §4.1 exists.
+409|
+410|**SELinux requirements (Phase 5 deliverables).** Written to be compile-ready, because a rule that cannot be expressed invites a Phase 5 author to drop it and silently lose the guarantee:
+411|
+412|- `neverallow phosphor_agentd` any capability-adjacent device node (telephony, camera, location, netlink for radios).
+413|- `neverallow phosphor_agentd { phosphor_broker }:binder call` — the *only* permitted binder target; nothing to the shell.
+414|- `neverallow phosphor_shell` binder to capability services directly (broker or nothing).
+415|- **The policy artifact gets a type.** It is a **JSON document** (`risk-policy.json`), stored as type **`phosphor_risk_policy_file`**; `neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } phosphor_risk_policy_file:file { write append create rename setattr unlink };` — read is deliberately allowed for agentd and broker (§6.3) and absent for shell, so this rule states the write ban against its named type rather than a vague "any Phosphor domain".
+416|- **`phosphor_keygate`'s file access, stated as the permission checks it actually is** (NEW-3 — "touching the agent's binary" is not a SELinux predicate, so it is enumerated): `neverallow phosphor_keygate phosphor_agentd_exec:file *;` and `neverallow phosphor_keygate phosphor_agentd_data_file:file *;` — denying the whole operation set on those two types covers `execute`, `execute_no_trans`, `entrypoint`, `read`, `map`, `write`, `create`, `unlink` and `setattr` together. **`mmap_exec_file_perms` is deliberately *not* named (NEW-7):** it is not defined in this tree (`global_macros:25-35` defines the macro set that is actually available, and that name is not among them), so naming it would make the rule fail to compile for no gain — `:file *` already denies strictly more than the macro would have.
+417|- **`phosphor_keygate`'s property access, as a subtraction** (the form used in-tree against `powerctl_prop`): `neverallow phosphor_keygate { system_prop -phosphor_safeboot_prop }:property_service set;` — the subtraction is what makes the rule precise, so the blanket form is deliberately not used. `phosphor_safeboot_prop` is declared `exact bool` (AOSP already ships this shape for `sys.boot_completed`), which is also why no `sys.powerctl`-style name special-casing is needed.
+418|- `neverallow phosphor_keygate` binder, network, and any device node other than the key input device.
+419|
+420|That last group is what makes keygate a one-way switch rather than a privilege: it can withhold the agent, and it has no expressible route to grant anything. sepolicy lives in our build tree's device/platform overlay.
+421|
+422|**Prototype → native migration map.**
+423|
+424|| Prototype artifact | Native successor | Fate |
+425||---|---|---|
+426|| `runtime/server.py` + `agent_core.py` | `phosphor_agentd` | port logic (quarantine, classifier, redaction, tool schemas); drop HTTP front-end/token auth |
+427|| `shell.html` | PhosphorShell WebView page | port UI; bridge inverted to out-of-page policy (§4) |
+428|| `bridge/src/*` dispatch surface | PhosphorBroker AIDL interfaces | method names preserved as tool vocabulary; §3 is the authoritative coverage list |
+429|| Termux / Termux:API / Termux:Boot | init `.rc` + platform packages | retired |
+430|| Tailscale / SSH dev access | adb / fastboot over USB | retired for production shape |
+431|| whisper.cpp in Termux | packaged native STT component | recompiled for the platform |
+432|| `ios/`, `ios-app/` | frozen PoC (TestFlight) | reference only; **H1 defect does not port** — closed in §4.1 |
+433|
+434|**Coverage accounting (replaces rev 1's "almost 1:1"):** the prototype's dispatch surface is fully accounted for in §3 — every prototype method is either mapped with its real API/permission, superseded by a renamed native method (`file.*` over `kv.*` for user data), or in a domain marked `[DEFERRED]` with its phase. Bluetooth, vibrate are **added**; NFC, calendar and alarms are **deferred and marked**; `contacts.*`, `notif.listen`, `notif.reply` are **additions** required by the vision, not prototype carry-over.
+435|
+436|---
+437|
+[... truncated; continue with line=438 ...]

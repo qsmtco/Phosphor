@@ -1,0 +1,122 @@
+[line 1 of docs/specs/P5-S3-keygate-service.md]
+1|# P5-S3 — `phosphor_keygate`: the boot-decision service
+2|
+3|**Phase:** 5 · **Spec ID:** P5-S3 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+4|**Status:** DRAFT — awaiting PM approval.
+5|**Depends on:** **P5-S1** (module `phosphor-keygate`, `packages/phosphor/init/`, `/system/bin/phosphor-keygate`) and **P5-S2** (`phosphor_keygate` domain, `phosphor_keygate_exec`, `phosphor_safeboot_prop`, `phosphor_safeboot_latch_prop`, the subtraction-form property `neverallow`). Neither is optional: without S2 the service cannot write its one property, and without the latch type the adb trigger is unachievable (audit R-2).
+6|**Blocks:** **P5-S4** (agentd's start condition *is* this service's output), and therefore S5–S7's normal-boot path. Also the *normal* half of S8's acceptance.
+7|**Authority:** architecture §6.5 (safe boot, redesigned — BLOCKER-1 resolution), §2.2 (lifecycle), §2.1 (keygate row), §8's map + SELinux section; rev-4 findings **NEW-6** (the one-way property is a policy fact, not a value check) and **NEW-1** (polarity); `docs/P4-ARCH-AUDIT.md` residual **R-2**.
+8|
+9|---
+10|
+11|## 1. Scope
+12|
+13|One file of init config plus one small native binary that:
+14|
+15|1. Runs once, early, **`class core`, `oneshot`**, started `on late-init`.
+16|2. Reads three trigger sources and folds them into a single decision.
+17|3. Writes exactly one property, `sys.phosphor.safeboot`, as `0` (normal) or `1` (safe boot).
+18|4. **Fails closed**: any indecision, any read error, any short-circuit ⇒ `1`.
+19|5. Exits. It holds no capabilities, starts nothing, and cannot grant anything.
+20|
+21|Downstream: `phosphor_agentd` is `disabled` and starts only on `on property:sys.phosphor.safeboot=0` (S4 provides the `.rc`; this spec owns the property contract).
+22|
+23|### Non-goals
+24|
+25|- **Not** the hardware key chord implementation. §10.2 lists "keygate hardware-key chord semantics (which chord; how read without a live framework)" as undecided, owner Phase 5. This spec therefore ships a **stub chord reader that always reports "no chord"** and names the seam; the chord must not block S3's acceptance, and shipping a stub is fail-safe because the other two triggers carry REC-2 (§6.5 residual gap; NEW-6(b)).
+26|- No agentd start, no broker interaction, no logging to a socket, no network, no binder.
+27|- No shell/app behaviour (S5).
+28|- No device operation without PM approval (§7).
+29|
+30|---
+31|
+32|## 2. Behaviour contract
+33|
+34|### 2.1 The decision
+35|
+36|Inputs, in fixed precedence — **any `1` wins; only an all-`0` read yields `0`**:
+37|
+38|| # | Source | Read | Semantics |
+39||---|---|---|---|
+40|| T1 | `ro.boot.phosphor.safeboot` | `ro.boot.*`, immutable at runtime, set host-side via kernel cmdline out-of-band | `1` ⇒ safe boot. **The load-bearing trigger** (NEW-6(b)). Unreadable ⇒ treat as `1`. |
+41|| T2 | `persist.phosphor.safeboot` | the set-only latch; **`absent→1` only, a value of `0` is ignored** | `1` ⇒ safe boot. Unreadable ⇒ treat as `1`. |
+42|| T3 | hardware key chord | stub reader in this spec → reports "no chord" | chord held ⇒ safe boot |
+43|
+44|Decision table (the whole truth table, no omissions):
+45|
+46|| T1 | T2 | T3 | `sys.phosphor.safeboot` | Rationale |
+47||---|---|---|---|---|
+48|| 0 | 0/absent | none | **0** | normal boot — the only path to `0` |
+49|| 1 | * | * | **1** | host asked; host is the trusted recovery authority |
+50|| 0 | 1 | * | **1** | latch set-only, cannot be cancelled by anything on-device |
+51|| * | * | held | **1** | chord |
+52|| any read error / any unparseable value / binary cannot decide | | | **1** | **fail-closed (§6.5)** |
+53|| keygate never ran at all | | | *property absent* | agentd never starts (`on property:…=0` cannot fire ⇒ absent ⇒ down). Correct by construction; see §6 edge case 1. |
+54|
+55|**T2's asymmetry is deliberate and must be commented in the source:** `0` is ignored, `1` latches. This is *not* enforceable by policy — `property_service set` has no value dimension (NEW-6, C8) — so it is enforced **in this binary** and stated as such. A binary-level rule is honest; a sepolicy rule pretending to do it would not be.
+56|
+57|### 2.2 The latch's one-way property, stated correctly (NEW-6)
+58|
+59|The completion note and the source comment must both say the true thing, not the withdrawn thing:
+60|
+61|- **(a)** No Phosphor domain holds `set` on `phosphor_safeboot_latch_prop` — enforced in S2's policy. Nothing inside the running system can write the latch in **either** direction. (Keygate **reads** it only; it does not clear it.)
+62|- **(b)** The immutable host-set `ro.boot.phosphor.safeboot` carries REC-2 **independently** of the latch. The latch is a convenience.
+63|- **(c)** For the one documented writer — the host, over adb, out-of-band — clearing is **exactly as symmetric as setting**, because the host+cable operator is already the trusted recovery authority (§6.5 residual gap, REC-1).
+64|
+65|**Explicitly forbidden in this spec:** writing any comment, commit message, or doc line claiming a `neverallow` sits "on the reverse direction". That formulation is withdrawn as inexpressible (NEW-6).
+66|
+67|### 2.3 What keygate must never do
+68|
+69|- Never write any property other than `sys.phosphor.safeboot` (S2's subtraction `neverallow` enforces it; the binary must not attempt it either — an attempted denied write is a `DENIED` in the log, and the auditor treats a Phosphor-caused avc denial as a defect).
+70|- Never start, signal, or probe agentd; never touch `phosphor_agentd_exec` or `phosphor_agentd_data_file` (S2 `:file *` neverallows).
+71|- Never use binder, sockets, or a device node other than the key input device (stub: none).
+72|- Never block boot: bound its own runtime (§3.4) and exit.
+73|
+74|### 2.4 Runtime shape
+75|
+76|- `oneshot`, `class core`, `user phosphor_keygate`, `group phosphor_keygate`, no `capabilities`, no `socket`, no `onrestart`.
+77|- Structured log: exactly one line, `phosphor-keygate: safeboot=<0|1> reason=<t1|t2|t3|undecided>` to stderr → logd. **No secret content; no property dumps.**
+78|- Exit status: `0` on a decided write, `1` on write failure after the fail-closed attempt. Exit status is not consumed by init (it is a oneshot), so it exists only for diagnostics — the *property*, not the status, is the contract.
+79|
+80|---
+81|
+82|## 3. Implementation location
+83|
+84|| Artifact | Path |
+85||---|---|
+86|| init config | `<tree>/packages/phosphor/init/phosphor_keygate.rc` |
+87|| Source | `<tree>/packages/phosphor/services/PhosphorKeygate/main.cpp` |
+88|| Module | `<tree>/packages/phosphor/services/PhosphorKeygate/Android.bp` (created in S1 as a stub; S3 fills `srcs` + `init_rc`) |
+89|| Chord seam | `<tree>/packages/phosphor/services/PhosphorKeygate/key_chord.h` — a single function `bool chord_held()` returning `false`, documented as the §10.2 open item |
+90|| Domain/property | S2's `phosphor_keygate.te`, `property.te`, `property_contexts` |
+91|
+92|### 3.1 `.rc` verbatim (architecture §6.5, verbatim by intent)
+93|
+94|```
+95|service phosphor_keygate /system/bin/phosphor-keygate
+96|    class core
+97|    user phosphor_keygate
+98|    group phosphor_keygate
+99|    oneshot
+100|
+101|on late-init
+102|    start phosphor_keygate
+103|```
+104|
+105|`[VERIFY AT BUILD: exact init syntax — architecture §6.5 explicitly defers "exact init syntax" to Phase 5. If `on late-init` proves too early to read `persist.*` or too late to beat the agentd trigger, record the actual trigger used (`on early-init`/`on init`/`on property:sys.boot_completed=1`) and justify it; the architecture's constraint is "one early decision, fail-closed, agent gated on its result", not the literal event name.]`
+106|
+107|**Ordering hazard — check it explicitly, do not assume it.** init evaluates `on property:` triggers when the property is **set**. If keygate writes `sys.phosphor.safeboot=0` before agentd's `.rc` (and therefore the `on property:sys.phosphor.safeboot=0` block) has been parsed, the trigger never fires and agentd never starts on a **normal** boot — a fail-closed-looking system that is simply dead.
+108|
+109|- **Primary resolution:** keygate runs `on late-init`, by which point all `.rc` files are loaded, so its write lands after the trigger is registered. Verify this on device (A9).
+110|- **Forbidden resolutions:** (a) a second-condition trigger such as `on late-init && property:…` — this tree's init matches one property per `on property:` block (§6.5: "`on property:` triggers match one property"); (b) any design where agentd **re-derives** the decision at startup (re-evaluating `ro.boot`/the latch/chord) — that is a **second decision point**, which §6.5 forbids and which would restore the very split-brain NEW-1 closed. Note the distinction from S4 §2.2: agentd's own start-condition check is **refuse-only** — it may *withhold* itself when the property is not `0`, and it can never *grant* itself anything, so it adds a fail-closed guard rather than a second decision; (c) an unconditional `start phosphor_agentd` anywhere.
+111|
+112|So there are exactly two compliant outcomes: keygate's write lands after the trigger is registered (proven, not assumed), or S3 **fails** and the finding returns to the architecture owner — a start condition that depends on unverified init parse order is not a contract.
+113|
+114|### 3.2 Source sketch (contract, not final code)
+115|
+116|```cpp
+117|// Reads T1/T2/T3, folds, writes exactly sys.phosphor.safeboot. Fail-closed.
+118|int main() {
+119|  int t1 = read_ro_boot();      // -1 = unreadable  -> treated as 1
+120|  int t2 = read_latch();        // -1 = unreadable  -> treated as 1; 0 = IGNORED
+[... truncated; continue with line=121 ...]

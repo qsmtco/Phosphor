@@ -1,0 +1,106 @@
+[line 120 of docs/specs/P5-S3-keygate-service.md]
+120|  int t2 = read_latch();        // -1 = unreadable  -> treated as 1; 0 = IGNORED
+121|  int t3 = chord_held() ? 1 : 0;
+122|  bool safe = (t1 != 0) || (t2 == 1) || (t3 == 1);   // -1 != 0 -> safe
+123|  if (!setprop_bool("sys.phosphor.safeboot", safe)) return fail_closed_write();
+124|  log("phosphor-keygate: safeboot=%d reason=%s", safe ? 1 : 0, reason);
+125|  return 0;
+126|}
+127|```
+128|
+129|The `chord_held()` stub returning `false` is a **declared seam**, not a silent gap: `reason=` is never `t3` in S3.
+130|
+131|### 3.3 Size and dependencies
+132|
+133|≤ 300 lines, libc only (`libbase` for `android::base::SetProperty`/`GetProperty` is acceptable and preferred). No `libbinder`, no `libhidl`, no framework dependency — keygate must be able to run **before** any surface is up (§6.5's whole point).
+134|
+135|### 3.4 Bounds
+136|
+137|Hard self-imposed deadline: if keygate has not decided within **2 s** of `main()`, it writes `1` and exits (fail-closed, bounded). No sleep loops, no retries beyond one property read.
+138|
+139|---
+140|
+141|## 4. Acceptance criteria
+142|
+143|**A1 — Forced property ⇒ no agentd (the primary acceptance).** Requires **PM approval for this device operation** (§7). With S4 landed:
+144|```bash
+145|adb shell setprop persist.phosphor.safeboot 1
+146|adb reboot
+147|# after boot:
+148|adb shell getprop sys.phosphor.safeboot          # -> 1
+149|adb shell getprop init.svc.phosphor_agentd       # -> absent  (NOT "stopped")
+150|adb shell pidof phosphor-agentd                  # -> empty
+151|```
+152|Pass = the three lines above. `absent` vs `stopped` is the discriminator: the service must never have been *started*, not merely have exited. A `stopped` reading fails the spec.
+153|
+154|**A2 — Normal boot ⇒ `0` and agentd runs.** Clear the latch **as the host** (the documented writer):
+155|```bash
+156|adb shell setprop persist.phosphor.safeboot ""     # or the tree's documented clear form
+157|adb reboot
+158|adb shell getprop sys.phosphor.safeboot            # -> 0
+159|adb shell getprop init.svc.phosphor_agentd         # -> running
+160|```
+161|Pass = `0` **and** `running`. (A2 depends on S4; if S3 is verified before S4 lands, the accepted substitute is `sys.phosphor.safeboot` = `0` plus `init.svc.phosphor_agentd` = `absent` *by design* because the service does not exist yet — recorded as a partial, and A2 is re-run at S4.)
+162|
+163|**A3 — Host-immutable trigger ⇒ no agentd, on a *normal* latch.** `ro.boot.phosphor.safeboot=1` via kernel cmdline (`fastboot oem`/`fastboot boot` path per the tree's support; requires PM approval). Pass = `sys.phosphor.safeboot` = `1`, agentd absent, and `ro.boot.phosphor.safeboot` unchangeable at runtime (`setprop` on it is refused — this is the REC-2 "without the agent's cooperation" property).
+164|
+165|**A4 — Fail-closed on indecision.** Two sub-cases, both without a device:
+166|- (a) **Static/lab:** the binary run on the host (or a `cbindgen`-free shim) with property reads stubbed to fail returns `safe=1`. Recorded as a unit-level check.
+167|- (b) **On-device:** unload the `.rc` (keygate never runs) and boot. Pass = `sys.phosphor.safeboot` **absent** and agentd **absent** — the absence of a decision lands on the safe side because agentd's start condition is `=0`. This is the pairing NEW-1 demanded; A4(b) is its device proof.
+168|
+169|**A5 — One property, only.** `logcat -b all -d | grep -E 'avc: *denied' | grep phosphor_keygate` → empty. Any keygate-caused denial fails the spec (it means the binary attempted something S2 denied, or S2 mis-granted).
+170|
+171|**A6 — Structured log, one line.** `logcat -d -s phosphor-keygate` shows exactly one line per boot with `safeboot=` and `reason=`; the reason is `t1`, `t2`, `undecided` — **never `t3`** in S3 (stub), and that is recorded, not hidden.
+172|
+173|**A7 — No capability surface.** The `.rc` has no `capabilities`/`socket`/`onrestart` line; `ps -A -o NAME,LABEL` for the (brief-lived) process shows `u:r:phosphor_keygate:s0` — or, since it is oneshot and exits fast, the label is proven instead by `dmesg`/`avc` naming `s:0` in A5 plus the compiled `seapp`/domain assignment from S2. Do not claim a process-label observation that was not captured.
+174|
+175|**A8 — Bounded runtime.** Time from `start` to exit `≤ 2 s`; `logcat` timestamps or an init-triggered marker. No boot stall.
+176|
+177|**A9 — Ordering proven, not assumed** (§3.1): the completion note states how init's property-trigger ordering was established (e.g. keygate's log line timestamp precedes `init.svc.phosphor_agentd=running`, per boot, ≥5 boots). If ordering cannot be proven, S3 **fails** and the finding returns to the architecture owner.
+178|
+179|**A10 — Documentation honesty.** The source comment, the `.rc` comment, and the completion note each state NEW-6's three facts and **do not** claim a value-level `neverallow`. `rg -n 'reverse direction' packages/phosphor` → empty.
+180|
+181|---
+182|
+183|## 5. Edge cases
+184|
+185|| Case | Required behaviour |
+186||---|---|
+187|| `persist.phosphor.safeboot` = `0` after being `1` (host cleared it) | Latch ignores `0` **per boot**; a cleared latch does not force safe boot. Keygate does **not** write `0` back to the latch (it has no `set` there). So: `1` boot → host sets `0` → next boot reads `0` ⇒ ignored ⇒ normal. This is the documented clear path; it is the *only* clear path and it is host-only. |
+188|| `ro.boot.phosphor.safeboot` absent (normal case on our build) | Empty `ro.boot.*` reads as empty string ⇒ **not** `"1"` ⇒ contributes `0`. Distinguish carefully: absent-as-empty is *normal*, absent-because-unreadable is *fail-closed*. The binary must tell them apart by read-`errno`, not by emptiness alone. |
+189|| `ro.boot.phosphor.safeboot=0` explicitly | `0` ⇒ contributes `0`. Only `1` triggers. |
+190|| Property already `1` from a previous boot and keygate never runs | agentd absent (A4b). Never "recovered" automatically — recovery is host or chord. Correct: safe boot must not self-clear. |
+191|| Two triggers disagree (T1=0, T2=0, chord held) | chord wins ⇒ `1` (any-`1`-wins). |
+192|| Keygate crashed before the write | No property ⇒ agentd absent ⇒ safe boot. Fail-closed. (`oneshot` + no `onrestart` ⇒ no crash loop.) |
+193|| Keygate crashed **after** writing `0` | agentd starts. Accepted: the decision was taken and written; a post-write crash cannot un-take it, and it holds no privilege to have abused. Recorded, not hidden. |
+194|| `late-init` fires more than once (some trees) | `oneshot` makes extra `start` a no-op. Idempotent anyway: the decision is a pure function of the triggers. |
+195|| Full-disk / no logd | `setprop` still succeeds; the one log line may be lost. A6 tolerance: a missing log line on a verified-good boot is a NOTE, not a failure — the *property* is the contract. |
+196|| Key chord reads a device node before it exists | Stub returns `false`, so S3 cannot hit this. When the chord lands (Phase 5 debt), the reader must fail **closed** (`chord_held()` unreadable ⇒ treat as held ⇒ safe boot) — record this requirement now so the later implementer inherits it. |
+197|
+198|---
+199|
+200|## 6. Definition of done / auditor checklist
+201|
+202|- [ ] A1–A10 pass; A1/A2/A3/A4b carry PM-approved device operations.
+203|- [ ] Decision table implemented exactly as §2.1; T2's `0`-is-ignored asymmetry present **and commented**.
+204|- [ ] Fail-closed proven both ways (decided-and-wrong-side via A4a/a/b, never-ran via A4b).
+205|- [ ] NEW-6's three facts stated; no "reverse direction" claim anywhere.
+206|- [ ] NEW-1's polarity pairing shown: agentd starts only on `=0`; absence ⇒ down.
+207|- [ ] R-2's latch **exercised** on-device (A1) — this is where the audit residual becomes device-proven rather than policy-proven.
+208|- [ ] Chord stub is a named seam with the fail-closed requirement recorded for the future implementer.
+209|- [ ] Ordering (A9) proven, not assumed.
+210|- [ ] Zero keygate-caused avc denials.
+211|
+212|## 7. Device-operation gate (must appear in the builder's plan)
+213|
+214|A1, A2, A3 and A4(b) each require **a reboot of the Pixel**, and A3 requires a kernel-cmdline mutation. Each is a separate, explicitly-approved device operation:
+215|- Approval: **PM, per operation**, before execution (vision: "Do not flash or wipe the phone without the user's clear approval for that specific operation"; architecture §6.5 makes the host path the trusted recovery authority).
+216|- No flash, no wipe is required by this spec. If a build must be installed, that is S1/S8's gate, and the recovery ladder of `docs/PROJECT-STATUS.md` §8 must be re-confirmed available (USB rehearsal, `fwupd` stopped) **before** the reboot.
+217|- Stop rule: if A1 cannot be reached without a flash, stop and return to the PM; do not extend the spec's authority.
+218|
+219|## 8. Open items created by this spec
+220|
+221|1. The key chord (which chord, how to read without a live framework) — **still open**, §10.2 owner Phase 5; this spec ships the stub and the fail-closed requirement for the successor.
+222|2. The correct early init trigger that both reads `persist.*` and precedes agentd's consumer (§3.1/A9) — builder, proven empirically.
+223|3. The documented host **clear** form for the latch (§5 row 1) — builder, must be stated in the completion note so the recovery procedure is written down somewhere executable.
+224|4. `ro.boot.phosphor.safeboot` readability under keygate's domain (§2 A3) — carried, gates A3 only.

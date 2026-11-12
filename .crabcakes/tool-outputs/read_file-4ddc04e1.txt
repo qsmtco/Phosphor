@@ -1,0 +1,112 @@
+[line 1 of docs/specs/P5-S7-ipc-channels.md]
+1|# P5-S7 — IPC: agentd↔shell `AF_UNIX SOCK_SEQPACKET`, broker binder surface, credential-provisioning hooks
+2|
+3|**Phase:** 5 · **Spec ID:** P5-S7 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+4|**Status:** DRAFT — awaiting PM approval.
+5|**Depends on:** **P5-S1** (`services/PhosphorIpc/`), **P5-S2** (domains + the `neverallow` binder rules that make "denied outside the pair" enforceable), **P5-S4** (agentd's socket server, `SO_PEERCRED`, framing constants), **P5-S6** (broker's bound service + registry).
+6|**Blocks:** nothing downstream in Phase 5 except S8's diagnostics (which read the health surfaces this spec finalises). Phase 6's rendering and Phase 8's tool execution both consume these channels.
+7|**Authority:** architecture §8's map and reconciliation notes 3–4 (shell↔agentd is `AF_UNIX SOCK_SEQPACKET`, shell connects, agentd verifies `SO_PEERCRED` + group/label; chosen *not* left as "binder AIDL / local socket"), §8's SELinux section (`neverallow phosphor_agentd { phosphor_broker }:binder call`; `neverallow phosphor_shell` binder to capability services), §6.4/§9 **OQ-2 DECIDED** (Keystore-wrapped + per-flash credential provisioning), §10.1's data-flow (Z2→Z1 carries the turn; Z2→Z3 carries tool calls).
+8|
+9|---
+10|
+11|## 1. Scope
+12|
+13|Three channels, their denial properties, and the credential-provisioning seam:
+14|
+15|| Channel | Mechanism | Direction | Carries |
+16||---|---|---|---|
+17|| **C-A** agentd ↔ shell | `AF_UNIX` `SOCK_SEQPACKET`, shell connects, agentd verifies `SO_PEERCRED` | bidirectional | user text/audio **in**, normalised screen HTML + turn metadata **out**. **Not a capability path** (§8 note 4). |
+18|| **C-B** agentd → broker | binder AIDL (`IPhosphorBroker`, S6) | agentd is client; broker is server | tool calls, re-checked in the broker |
+19|| **C-C** shell → broker | binder AIDL, same interface | shell is client | `phosphorApi` proxy RPCs end here (§4/R-BRIDGE-1: "every `phosphorApi` method is a proxy that ends in a broker RPC") |
+20|| **C-D** credential provisioning hooks | Keystore-backed interface, **stubbed** | agentd ← provisioning | OQ-2's per-flash provisioning; no secret material moves in S7 |
+21|
+22|**The denial property is the deliverable.** "Round-trip each channel" is necessary but not sufficient: the spec's core acceptance is that each channel **refuses** peers outside its declared pair, and that refusal is enforced by **two independent layers** — the kernel/`SO_PEERCRED` check in the daemon and SELinux's `neverallow`/absence-of-`allow` in policy.
+23|
+24|### Non-goals
+25|
+26|- No message *semantics*: no turn handling, no screen rendering, no tool execution, no classifier. C-A frame types are defined and echoed/validated; the payload is a stub.
+27|- No credential **use**: no unlock, no decrypt, no model-provider call. C-D is an interface plus a refusal shape.
+28|- No new capability permissions anywhere.
+29|- No device operation (§6).
+30|
+31|---
+32|
+33|## 2. Behaviour contract
+34|
+35|### 2.1 C-A — the socket wire (chosen mechanism, not a fallback)
+36|
+37|- `AF_UNIX`, `SOCK_SEQPACKET`, path from the shared constant in `services/PhosphorIpc/` (`/data/misc/phosphor/agentd.sock` as S4 fixed it).
+38|- **Shell connects; agentd listens.** The reverse would let a compromised shell hold the listening socket and accept a fake brain.
+39|- **Admission, three checks, all must pass on every `accept()`:**
+40|  1. `SO_PEERCRED` UID == `AID_PHOSPHOR_SHELL`;
+41|  2. `getSoPeerSid()`/`SO_PEERSEC` label == `u:r:phosphor_shell:s0`;
+42|  3. PID is currently alive and is in the shell domain (catches a reused/raced SID).
+43|  Failure ⇒ close immediately, log `peer_rejected` with `{pid, uid, label, reason}` — **and log it even if the log itself is the only side effect**, because §6.7's audit needs the attempt.
+44|- **Socket file mode `0600`, owner `phosphor_agentd`.** The directory is `0700`. Two filesystem gates on top of the credential checks.
+45|- **Framing:** `SOCK_SEQPACKET` is message-oriented, so no length-prefix *needed* for correctness; the frame carries a fixed header + body for versioning:
+46|  ```
+47|  struct phosphor_frame { u16 version; u16 type; u32 body_len; u8 body[]; }
+48|  ```
+49|  `version = 1`; an unknown version ⇒ `ERROR` reply + close (fail closed, do not "best effort" parse). Body max enforced from S4's constant (S4 open item 2 — freeze it here: **1 MiB**, with an explicit note that the Phase 6 screen payload must be chunked or the limit raised by a reviewed change, not silently exceeded).
+50|- **Frame types (S7-minimal, and the vocabulary Phase 6 extends):**
+51|  | type | direction | S7 behaviour |
+52|  |---|---|---|
+53|  | `HELLO` / `HELLO_ACK` | shell→agentd / agentd→shell | version exchange, agentd's `policy_version` and `safeboot` state |
+54|  | `TEXT_IN` | shell→agentd | accepted, echoed back as `TEXT_ACK` (no agent loop yet) |
+55|  | `SCREEN_OUT` | agentd→shell | a **fixed stub** document string (the S5 stub screen), proves the outbound path |
+56|  | `STATE` | agentd→shell | `online` / `offline` heartbeat, consumed by S5's offline state |
+57|  | `ERROR` | both | codes: `BAD_VERSION`, `BAD_FRAME`, `NOT_IMPLEMENTED`, `POLICY_INVALID` |
+58|- **No capability in this channel.** Static assertion: `services/PhosphorIpc/` contains no tool-name table, no broker client, no permission-shaped API. The auditor enforces this — §8 note 4 and §5's asymmetry paragraph both make the channel *outside* the classifier, and that is only true if nothing capability-shaped rides it.
+59|- **Ordering and backpressure:** one in-flight request per `SOCK_SEQPACKET` connection; on a full send buffer, drop the **oldest `SCREEN_OUT`** (a superseded screen is worthless) and never drop a `TEXT_IN`. Record this policy — it is the difference between "shell shows a stale screen" and "user's words vanish".
+60|- **Reconnect:** the shell reconnects with exponential backoff (250 ms → 8 s, jittered); agentd accepts a new connection after the old closes; agentd never accumulates stale connections (each `accept` replaces the previous admitted peer, and the old fd is closed — one admitted peer at a time). Single-peer invariant is stated because S5's `singleTask` activity makes >1 shell process unexpected, and an accidental second is a bug to log, not to serve.
+61|
+62|### 2.2 C-B / C-C — the broker binder surface
+63|
+64|- **One AIDL interface** (`IPhosphorBroker`, defined in S6) used by **two** clients: agentd and shell. No second interface for the shell — if the shell needs a different method set, that is a method, not a surface (§3 is the single source; a second surface is how privilege drifts).
+65|- **S7 adds the client side only:** `IPhosphorBroker` client wrappers in `services/PhosphorIpc/` plus the shell-side `phosphorApi` → broker RPC path.
+66|- **Wire rules:**
+67|  - `submitForApproval` is **blocking with a deadline**: the client sets a 6-minute timeout (5-min TTL + 1-min margin), and on timeout treats it as `EXPIRED` ⇒ "user declined" (R-GATE-7). A blocking call with no deadline is a hung agent.
+68|  - A `SecurityException`/`RemoteException` ⇒ `NOT_IMPLEMENTED`/fail-closed result, **never** a retry that could double-submit an approval.
+69|  - The client must **not** cache decisions; single-use is the registry's job (S6).
+70|- **Proxy chain (the R-BRIDGE topology, §4):** page JS → `phosphorApi` (whitelisted) → shell → binder → broker. **The shell is a dumb relay**: it adds no policy, no unlock, no "always allow" state (§4's "the page cannot fake an approval, cannot unlock a method, and cannot read the registry"). Static assertion: the shell holds no capability permission beyond `RECORD_AUDIO`, so a relay bug cannot escalate.
+71|- **Denial property:** only `phosphor_agentd` and `phosphor_shell` may `binder call` `phosphor_broker`; every other domain is denied by policy, and S2's `neverallow` proves it at compile time rather than at runtime.
+72|
+73|### 2.3 C-D — credential provisioning hooks (OQ-2, stubbed)
+74|
+75|OQ-2 is **DECIDED**: Keystore-wrapped, hardware-backed, **per-flash provisioning**, with on-device secret-at-rest explicitly **best-effort until relock** (§9/§6.4). S7 builds the *shape* and refuses to build the secret path:
+76|
+77|```cpp
+78|// services/PhosphorIpc/credential_hooks.h
+79|// OQ-2 DECIDED: Keystore-wrapped per-flash provisioning. NOT IMPLEMENTED in Phase 5.
+80|// Provisioning is host-driven and therefore a DEVICE OPERATION: it requires PM approval
+81|// and must never be triggered by an in-device component (no Phosphor domain holds the
+82|// write path to the credential store -- see the S2 data-dir grant, deliberately not
+83|// exercised here).
+84|enum class ProvisionResult { NOT_PROVISIONED, PROVISIONED, KEY_UNAVAILABLE };
+85|ProvisionResult credential_state();          // S7: always NOT_PROVISIONED
+86|ProvisionResult provision(/* from host provisioning channel */) = delete;  // no in-device path
+87|```
+88|
+89|- The seam exposes **state**, not secrets. No function returns, accepts, or transports key material in Phase 5.
+90|- `credential_state()` returning `NOT_PROVISIONED` is a **real** state the agent must handle (model turns fail gracefully, §5's degradation ladder) — S7 proves the *state* is reportable, not that provisioning works.
+91|- **A refusal is the acceptance:** any attempt to add an in-device provisioning entry point (binder method, socket frame type, adb-reachable service) **fails review**. The host path is out-of-band (§6.5/§9's "per-flash"), and adding a device-side one would make the credential store reachable by every Phosphor process — precisely what §6.4's table treats as `DESTRUCTIVE-READ`.
+92|- Keystore use is deferred; when it lands it must use `StrongBox` where available (8a is StrongBox-capable, §9) and fall back with a recorded, visible downgrade.
+93|
+94|### 2.4 Health surfaces this spec finalises
+95|
+96|- C-A liveness: agentd's `last_frame_at` in `/data/misc/phosphor/health` (S4's file) is updated by the socket layer, and S5's `STATE` heartbeat consumes it.
+97|- C-B/C-C liveness: broker's bound-client count (via `dumpsys activity services`), plus a `ping()` the diagnostics tool calls.
+98|- **No new health channel** — S8 reads what S4/S6/S7 already expose. Inventing a fourth surface here would fragment diagnostics.
+99|
+100|---
+101|
+102|## 3. Implementation location
+103|
+104|| Artifact | Path |
+105||---|---|
+106|| Shared constants + frame header | `<tree>/packages/phosphor/services/PhosphorIpc/{ipc_constants.h, frame.h}` |
+107|| Frame types + codec | `…/PhosphorIpc/frame_codec.{h,cpp}` |
+108|| Socket client (shell side) | `<tree>/packages/phosphor/apps/PhosphorShell/…/AgentLink.java` (S5 seam, filled) |
+109|| Socket server (agentd side) | `<tree>/packages/phosphor/services/PhosphorAgentd/src/socket.rs` (S4 skeleton, filled) |
+110|| Broker client wrappers | `…/PhosphorIpc/BrokerClient.{h,cpp}` (agentd, C++) or `…/PhosphorIpc/broker.rs` (if agentd is Rust — S4 open item 1 decides) |
+[... truncated; continue with line=111 ...]

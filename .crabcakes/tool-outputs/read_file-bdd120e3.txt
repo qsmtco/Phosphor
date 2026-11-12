@@ -1,0 +1,122 @@
+[line 1 of docs/specs/P5-S4-agentd-skeleton.md]
+1|# P5-S4 — `phosphor_agentd`: native daemon skeleton
+2|
+3|**Phase:** 5 · **Spec ID:** P5-S4 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+4|**Status:** DRAFT — awaiting PM approval.
+5|**Depends on:** **P5-S1** (module `phosphor-agentd`), **P5-S2** (`phosphor_agentd` domain, `phosphor_agentd_exec`, `phosphor_agentd_data_file`, `phosphor_risk_policy_file` read grant, the binder-target `neverallow`), **P5-S3** (`sys.phosphor.safeboot` must exist and be written, or the start condition never fires).
+6|**Blocks:** **P5-S7** (the AF_UNIX end that S7's client connects to) and every later phase's agent brain. S6's "bind from agentd path" acceptance needs this daemon alive.
+7|**Authority:** architecture §2.1 (agentd row: "no Android runtime/signature capabilities"), §2.2 (lifecycle: `disabled`, started by `on property:sys.phosphor.safeboot=0`, `onrestart` re-exec, logd logging; crash-safe home), §5 (turn ownership), §6.3 (authoritative classifier location), §6.7 (audit), §7 (degradation ladder row "agent daemon crash-loop"), §8 (map).
+8|
+9|---
+10|
+11|## 1. Scope
+12|
+13|A native daemon that **is** the agent's platform home, with **zero** capability permissions, that:
+14|
+15|1. Is declared `disabled` and starts **only** on `on property:sys.phosphor.safeboot=0` — never at `class_start core`.
+16|2. Exits immediately and cleanly if it ever finds itself starting without that condition (defence in depth against an `.rc` mistake).
+17|3. Emits structured logs (logd) from first instruction, with a stable event vocabulary.
+18|4. Owns a health surface and is restarted by init on crash, with a documented restart policy and crash-loop behaviour.
+19|5. Creates and owns its private data dir `/data/misc/phosphor/`, reads the read-only policy artifact at startup (and fails closed if it is missing/unparseable).
+20|6. Hosts the **server side** of the shell↔agentd `AF_UNIX SOCK_SEQPACKET` channel with `SO_PEERCRED` verification (framing implemented here; message *semantics* are S7).
+21|7. Holds the turn/state ownership hooks: transcript store, classifier entry point, quarantine envelope — as **interfaces with stub implementations**, so later phases fill behaviour without touching the process shape.
+22|
+23|### Non-goals (S4 is a skeleton)
+24|
+25|- No model client, no network use (§2.1 grants network egress to this process; S4 does not exercise it — and note **S2's policy grants no network rule**; it is added when the client lands).
+26|- No classifier logic beyond loading the artifact and reporting a version.
+27|- No STT, no tool execution, no broker calls.
+28|- No shell/app work.
+29|- No device operation in this spec's own gates (see §6 for the two that S3 already approved).
+30|
+31|---
+32|
+33|## 2. Behaviour contract
+34|
+35|### 2.1 Process shape
+36|
+37|| Property | Value | Source |
+38||---|---|---|
+39|| Binary | `/system/bin/phosphor-agentd` | §2.1, §8 map |
+40|| Language | Rust (the agent-core logic is ported from `agent_core.py`/`server.py`) — C++ is acceptable only if the port is deferred, and the choice is recorded | §2.1, §8 migration map |
+41|| `.rc` | `class core`, `disabled`, `user phosphor_agentd`, `group phosphor_agentd` | §6.5 verbatim |
+42|| UID | `AID_PHOSPHOR_AGENTD` | §2.1 (S2 declares it) |
+43|| Domain | `u:r:phosphor_agentd:s0` | §2.1 |
+44|| Capabilities | **none.** No `capabilities` line, no `CAP_*`; no Android permission of any kind; no signature permission | §2.1: "**No Android runtime/signature capabilities.**" |
+45|| Network | egress only, when the model client lands (not S4) | §2.1, §8 ("ONLY network egress path in Phosphor") |
+46|| Binder | **client to `phosphor_broker` only**; no binder server; nothing to shell | §8: `neverallow phosphor_agentd { domain -phosphor_broker -self }:binder call` |
+47|| Socket | AF_UNIX SOCK_SEQPACKET **server**, shell connects, agentd verifies peer | §8 note 3/4 |
+48|
+49|`.rc` verbatim (architecture §6.5):
+50|
+51|```
+52|service phosphor_agentd /system/bin/phosphor-agentd
+53|    class core
+54|    disabled
+55|    user phosphor_agentd
+56|    group phosphor_agentd
+57|
+58|on property:sys.phosphor.safeboot=0
+59|    start phosphor_agentd
+60|```
+61|
+62|`[VERIFY AT BUILD: `onrestart` syntax — architecture §2.2 says "`onrestart` re-exec". Record the actual `onrestart` block used, e.g. `onrestart restart phosphor_shell`? No: agentd's own re-exec is init's ordinary service restart; an `onrestart` section is for *reacting* to it. The spec requires: init restarts the daemon on unexpected exit (the default for a non-`oneshot` service) and any `onrestart` action is declared and justified in the completion note.]`
+63|
+64|### 2.2 Start-condition defence in depth
+65|
+66|Before doing anything: read `sys.phosphor.safeboot`. If it is not exactly `0`, **log and exit(0)** without creating dirs or sockets. This is not redundant with init — it protects against a future `.rc` edit, a `class_start` regression, or a manual `start` that bypasses the trigger. Comment it as such.
+67|
+68|### 2.3 Structured logging (the event vocabulary)
+69|
+70|One line per event, JSON or `key=value`, prefixed `phosphor-agentd:` — stable field names, because §6.7's audit store and REC-5's quarantine both consume these strings:
+71|
+72|| Event | Fields | When |
+73||---|---|---|
+74|| `start` | `pid`, `safeboot`, `build_id`, `policy_version` | after start-condition check |
+75|| `policy_loaded` | `policy_version`, `sha256`, `path` | after the artifact read |
+76|| `policy_error` | `err`, `path` | artifact missing/unparseable ⇒ **fail closed** (§2.4) |
+77|| `socket_listening` | `path`, `uid`, `gid`, `mode` | after the AF_UNIX bind |
+78|| `peer_rejected` | `pid`, `uid`, `reason` | on `SO_PEERCRED` failure |
+79|| `shutdown` | `reason`, `uptime_ms` | on clean exit |
+80|| `exit_refused_start` | `safeboot` | §2.2 refusal |
+81|
+82|**Redaction rule (binding on this table):** no field may carry a credential, a transcript body, a message body, or an absolute path under `/data/misc/phosphor/credentials/`. R-SEC-4 applies at write time, not at read time.
+83|
+84|### 2.4 Startup ordering and fail-closed points
+85|
+86|1. Start-condition check (§2.2) — refuse.
+87|2. Create/verify `/data/misc/phosphor/` with `0700`, owner `phosphor_agentd`. Failure ⇒ log `policy_error`-class fatal, exit non-zero (init restarts; the shell shows offline — §2.2's crash-safe home).
+88|3. Read `/system/etc/phosphor/risk-policy.json`; parse `policy_version`. **Missing or unparseable ⇒ exit non-zero, do not listen.** Rationale: §6.3's fail-closed order starts with the policy existing; a daemon that runs without a policy version cannot classify, and §6.3(2) makes version mismatch a deny. Starting anyway would create a brain that can never lawfully act — worse than being absent, because the shell would show "controlled" with no gate behind it.
+89|4. Open the AF_UNIX socket (§2.5). Failure ⇒ exit non-zero.
+90|5. Log `start` + `socket_listening`; enter the event loop.
+91|
+92|### 2.5 The socket (framing only; semantics are S7)
+93|
+94|- `AF_UNIX`, `SOCK_SEQPACKET`, path `/data/misc/phosphor/agentd.sock` (S7 may move it; **the path is a shared constant owned by `services/PhosphorIpc/`**, created here).
+95|- Bind with `umask` such that the socket is `0600` owned by `phosphor_agentd`; on every `accept`, read `SO_PEERCRED`, and admit **only** a peer whose UID is `AID_PHOSPHOR_SHELL` **and** whose domain is `phosphor_shell`. Two checks, not one: a UID alone would admit a shell process that had been subverted into a different label, and a label alone would admit any process in that domain.
+96|- Framing: length-prefixed, max frame size enforced (`[VERIFY AT BUILD: choose and record — suggested 1 MiB, with a documented "screen payload may exceed" review]`), oversized frame ⇒ close connection, log `peer_rejected`.
+97|- No blocking accept loop that cannot be cancelled: one `poll()`/epoll loop, clean `SIGTERM` shutdown that unlinks the socket.
+98|- **Zero message semantics in S4**: a well-formed frame is logged as `frame_len=` and dropped with a `NOT_IMPLEMENTED` reply. S7 replaces the handler.
+99|
+100|### 2.6 Health and crash restart
+101|
+102|- **Health surface for S8, defined here:**
+103|  - `init.svc.phosphor_agentd` state (`running`/`restarting`/`stopped`) — from init.
+104|  - `/data/misc/phosphor/health` — a file the daemon touches/updates each loop tick with `pid`, `started_at`, `policy_version`, `last_frame_at`. **Written by agentd, read by `phosphor-ctl` (S8).** Not a socket, not a binder call: S4 needs **no** IPC to be healthy.
+105|- **Restart:** init's default for a non-`oneshot` service. No `onrestart` action required; if one is added it must be justified (§2.1 note).
+106|- **Crash-loop behaviour (architecture §7 row 3):** init's `service … ` has a default crash-restart budget; the daemon must additionally back off **itself** on a fast-crash pattern: if it starts and dies within 5 s more than 3 consecutive times, it must write a `crashloop` marker to `/data/misc/phosphor/health` and exit with status 1 so init's own limits engage rather than a hot loop. Rationale: a hot loop starves the boot; the shell's offline state (§2.2) is the user-visible remedy and **must be reachable**.
+107|- **Kill ⇒ restart** is an acceptance criterion (§4 A4), so no `oneshot`, no `disabled`-only-once behaviour, no `setprop` self-clear.
+108|
+109|### 2.7 What the daemon must never do (audited)
+110|
+111|- Never hold an Android permission, a signature permission, or a runtime grant.
+112|- Never `set` any property (S2 grants it only `get_prop` on `phosphor_safeboot_prop`; a write attempt is a `DENIED`).
+113|- Never write the policy artifact (S2 `neverallow`).
+114|- Never binder-call the shell, `system_server` services, or any capability service.
+115|- Never read the secret paths of §6.4 (`/data/misc/keystore/**`, `/data/adb/**`, `/data/local/tmp/**`, `*.pem` class) — S2 must make most of them unreachable; the capability store at `/data/misc/phosphor/credentials/` is *permitted* by the data-dir rule but **must not be read in S4** (no credential use exists yet). Record that the rule is broader than S4 exercises.
+116|
+117|---
+118|
+119|## 3. Implementation location
+120|
+[... truncated; continue with line=121 ...]

@@ -1,0 +1,117 @@
+[line 1 of docs/specs/P5-S8-diagnostics-exit.md]
+1|# P5-S8 — Diagnostics, health checks, and the deliberate safe-boot drill (Phase 5 exit)
+2|
+3|**Phase:** 5 · **Spec ID:** P5-S8 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+4|**Status:** DRAFT — awaiting PM approval.
+5|**Depends on:** **all of S1–S7.** S8 adds no new mechanism; it makes the existing ones *observable* and *repeatable*, and it is the last spec so that its checklist can reference working components. S8 is also the only spec that closes Phase 5, so it carries the exit criterion.
+6|**Blocks:** Phase 6 (the shell's real rendering surface), which should not start until the foundation is diagnosable.
+7|**Authority:** BUILD-PLAN Phase 5 deliverables ("Diagnostics and recovery hooks") and exit criteria ("The Pixel boots a custom Phosphor build in which the core agent foundation starts reliably as part of the operating system"); architecture §6.5 (safe boot) and its residual gap; §6.7 (audit); §7 (degradation ladder); §10.2's "Phase 5 acceptance tests named in this doc (§4.1 H1 re-run; §3 hard-restricted grant landing; R-PERF microbench) — specified, not yet run"; `docs/PROJECT-STATUS.md` §8 (operational procedures), §9 (traps).
+8|
+9|---
+10|
+11|## 1. Scope
+12|
+13|1. **`phosphor-ctl`** — one diagnostics binary (module created empty in S1) exposing the foundation's health: `status`, `health`, `policy`, `ipc`, `log`, `safeboot`.
+14|2. **`dumpsys` surface** — a registered `dumpsys phosphor` (or `dumpsys activity service PhosphorBroker` plus an `adb shell phosphor-ctl status` equivalent), so diagnosis does not require a custom protocol.
+15|3. **Health checks** — a single deterministic pass/fail over the foundation's own signals (S4's health file, S6's bound clients, S7's channels, S3's property).
+16|4. **The safe-boot drill procedure** — a written, ordered, reversible procedure producing the Phase 5 acceptance evidence, **explicitly gated as a device operation requiring PM approval before any step runs**.
+17|5. **The Phase 5 exit-criterion checklist** per BUILD-PLAN, with the three architecture-named acceptance tests (§4.1 H1, §3 hard-restricted grant landing, R-PERF microbench) marked by verdict — **run or explicitly deferred with a reason**, never silently omitted.
+18|
+19|### Non-goals
+20|
+21|- No new privileged surface: `phosphor-ctl` is a **read-only** tool with no capability permission; if a check needs privilege, it is dropped rather than granted (a diagnostics tool that needs `READ_SMS` to diagnose is a backdoor).
+22|- No metrics/telemetry collection, no network, no upload.
+23|- **No device operation performed by this spec's authoring.** The drill is a *procedure*; executing it requires PM approval per operation.
+24|- No Phase 6+ diagnostics (rendering perf, conversation quality).
+25|
+26|---
+27|
+28|## 2. Behaviour contract
+29|
+30|### 2.1 `phosphor-ctl` — command surface
+31|
+32|Read-only, no arguments beyond the subcommand, exit codes meaningful for scripting (`0` healthy, `1` degraded, `2` broken, `3` unusable-invocation).
+33|
+34|| Command | Reads | Output contract |
+35||---|---|---|
+36|| `status` | `sys.phosphor.safeboot`, `init.svc.phosphor_agentd`, `init.svc.phosphor_keygate`, `pidof`, broker bound-state | One line per subsystem: `NAME=STATE (detail)`. States: `ok`, `absent`, `down`, `unknown`. |
+37|| `health` | S4's `/data/misc/phosphor/health` + the above | Machine-greppable `key=value` lines; non-zero exit if any required subsystem is not `ok`. **The single check the drill's automation uses.** |
+38|| `policy` | `/system/etc/phosphor/risk-policy.json` + the broker's `policyVersion()` | `policy_version=`, `sha256=`, `broker_version=`, `match=true|false`. **Read-only**; never writes the artifact. |
+39|| `ipc` | socket presence/mode; agentd `last_frame_at`; broker client count | Per-channel: `c-a=ok|down`, `c-b=…`, `c-c=…`, with the observed evidence (mode, age, count). |
+40|| `log` | logd buffers filtered to `phosphor-*` tags | The last N lines; **redaction-preserving** (it prints what was logged, and nothing was logged that contains a payload). Never unredacts, never dumps `/data`. |
+41|| `safeboot` | both triggers + the decision + latch | `ro.boot.phosphor.safeboot=`, `persist.phosphor.safeboot=`, `sys.phosphor.safeboot=`, `decision=normal|safe|undecided`. **Explains** the decision so an operator does not have to re-derive NEW-6. |
+42|
+43|- **No secrets, ever.** No command reads `/data/misc/phosphor/credentials/`, `/data/misc/keystore/`, `/data/adb`, and none prints a path under them.
+44|- **No writes** except nothing at all: `phosphor-ctl` performs zero writes (not even a log file). If a future command needs to write, it is a separate, reviewed addition.
+45|- Robustness: every read is individual and failure-tolerant; a missing file yields `unknown`, never an exception or a stack trace at the operator.
+46|
+47|### 2.2 `dumpsys` surface
+48|
+49|- **Preferred:** a `dumpsys phosphor` entry via a small registered service is a framework change (`frameworks/base` service registration) and is **out of Phase 5's declared scope** (BUILD-PLAN Phase 5 does say "Add required framework interfaces and service registration" — so if it is cheap in-tree, it is in scope; if not, the fallback below is the deliverable and the reason is recorded).
+50|- **Deliverable fallback (mandatory):** `dumpsys activity service com.phosphor.broker/.PhosphorBrokerService` prints the broker's registry summary and bound clients (S6 already supports this via `dump()`); `dumpsys package com.phosphor.shell` shows the HOME resolution; `dumpsys activity activities | grep phosphor` shows the surface. Document the **exact** command set in the completion note so "check dumpsys" is executable rather than vague.
+51|- Decision rule: the spec is satisfied by **a documented, working dumpsys-based diagnosis path**; a `dumpsys phosphor` registration is a bonus with its own review (framework edit). Record which was delivered.
+52|
+53|### 2.3 Health checks (what "healthy" means)
+54|
+55|Pass requires **all** of, on a normal boot:
+56|
+57|| # | Check | Signal |
+58||---|---|---|
+59|| H1 | keygate decided | `sys.phosphor.safeboot` present and in {0,1} |
+60|| H2 | agentd running | `init.svc.phosphor_agentd=running`, one pid, no `crashloop` marker |
+61|| H3 | policy valid | artifact readable, `policy_version` matches the build stamp (S6's check, surfaced) |
+62|| H4 | agentd's own view healthy | `/data/misc/phosphor/health` fresh (`started_at` matches pid's start, `policy_version` non-empty) |
+63|| H5 | C-A up | socket exists `0600`, `last_frame_at` younger than the heartbeat interval |
+64|| H6 | broker bound | ≥1 bound client on `phosphor_shell`; `ping()` answered |
+65|| H7 | shell is the surface | resolved HOME is `com.phosphor.shell`, activity resumed |
+66|| H8 | no denials | `logcat -b all -d \| grep 'avc: *denied' \| grep phosphor` → empty |
+67|
+68|`phosphor-ctl health` returns `0` iff H1–H8 all pass, and prints the failing check(s) by name otherwise. **H7 is app-layer**; if the ctl binary cannot read the resolved HOME without privilege, it is allowed to print `shell=unknown` and the drill records H7 from `dumpsys` — the check is not dropped, only sourced elsewhere.
+69|
+70|On a safe boot, the healthy signature is **inverted** and must be stated explicitly so a correct safe boot is not diagnosed as broken: `sys.phosphor.safeboot=1`, agentd **absent**, broker **absent**, shell **not the surface**, stock launcher resumed, H3–H6 `absent` **by design**. `phosphor-ctl safeboot` prints `decision=safe` and the reasons.
+71|
+72|### 2.4 The safe-boot drill (design only — **requires PM approval before any device operation**)
+73|
+74|**This is the operative gate. The procedure below is a document. Executing any step marked ⚠ is a device operation and requires explicit PM approval for that operation, obtained before execution. No agent may run these steps on its own authority.**
+75|
+76|Preconditions (each verified, none assumed):
+77|1. Recovery ladder available and rehearsed (`docs/PROJECT-STATUS.md` §8): USB port proven by the three transitions; `sudo systemctl stop fwupd.service`; know that a rung-2 reflash **wipes**.
+78|2. The acceptance build is a **signed release** or a known dev image whose provenance is recorded (never "some build").
+79|3. A baseline capture from the *normal* boot exists (the H1–H8 evidence), so the drill has something to compare against.
+80|4. The device's current state is on record (build fingerprint, slot, `ro.boot.vbmeta.digest`).
+81|
+82|Drill steps:
+83|
+84|| # | Step | Gate |
+85||---|---|---|
+86|| D1 | Capture normal-boot evidence: `phosphor-ctl health` = 0, plus screenshots (shell is HOME). | in-session, no reboot |
+87|| D2 | Capture the **H1 re-run** on this boot: inject the hostile screen (§4.1's test) and confirm block + inline-script-executes + no egress. | in-session |
+88|| D3 | Set the latch **as the host**: `adb shell setprop persist.phosphor.safeboot 1`; confirm `getprop` reads `1`. | ⚠ **PM approval** (write to device state) |
+89|| D4 | Reboot. | ⚠ **PM approval** |
+90|| D5 | After boot: `phosphor-ctl safeboot` → `decision=safe` with reasons; `phosphor-ctl health` → the **safe-boot signature**; screenshot = stock launcher; `init.svc.phosphor_agentd` absent; broker absent. | in-session |
+91|| D6 | Prove Settings + phone are usable (§6.5: "launcher + Settings + no agent"; §7: "the stock Dialer is usable during dev"). | in-session |
+92|| D7 | Clear the latch **as the host** (`persist.phosphor.safeboot` → `0` or the documented clear form from S3 open item 3); reboot. | ⚠ **PM approval** ×2 |
+93|| D8 | After boot: `phosphor-ctl health` = 0 again, shell is HOME. Confirms the drill is **reversible**. | in-session |
+94|| D9 | Record: each step's command, output, timestamp, screenshot; the approval for D3/D4/D7 referenced by its text. | — |
+95|
+96|**Reversibility is the point.** A drill that ends in a state the operator cannot leave is not a drill; D7/D8 exist to prove the exit. **Stop rules (any one halts the drill, no improvisation):** device does not return to adb after a reboot ⇒ recovery ladder, PM informed; `phosphor-ctl safeboot` reports `undecided` on the *normal* boot ⇒ **stop, this is a defect** (fail-closed worked, but the normal path is broken); any avc denial attributable to Phosphor ⇒ stop and file.
+97|
+98|**What the drill must NOT do:** rely on `ro.boot.phosphor.safeboot` (kernel-cmdline) as the *only* demonstrated trigger — the latch path is demonstrated above because it needs no bootloader interaction; the `ro.boot` path is S3 A3's separate approval and, if not approved, is recorded as **not demonstrated** with the reason. Do not claim REC-2 fully proven from the latch alone: state which trigger was exercised. (§6.5's residual gap is exactly this honesty.)
+99|
+100|### 2.5 The Phase 5 exit-criterion checklist (BUILD-PLAN)
+101|
+102|BUILD-PLAN Phase 5's exit criterion: *"The Pixel boots a custom Phosphor build in which the core agent foundation starts reliably as part of the operating system."* Decomposed into verifiable rows, each with its owning spec:
+103|
+104|| # | Row | Owner | Verdict required |
+105||---|---|---|---|
+106|| E1 | The image builds from an unchanged recipe | S1 A2 | PASS + step count |
+107|| E2 | All five modules are in the image | S1 A3 | PASS |
+108|| E3 | sepolicy compiles, neverallows intact | S2 A1–A5 | PASS |
+109|| E4 | Boot decision taken, fail-closed both ways | S3 A1/A2/A4 | PASS |
+110|| E5 | Agent foundation **starts reliably** — the literal exit criterion | S4 A1/A4 (+ ≥5 consecutive normal boots, zero crash-loops) | PASS. **"Reliably" is quantified here as 5/5 boots and 3/3 kill-restarts**; the completion note says so, so the word is not left to opinion. |
+111|| E6 | Shell is the surface on normal boot | S5 A1 | PASS |
+112|| E7 | Safe boot lands on the stock launcher | S5 A2 | PASS |
+113|| E8 | Broker binds; card renders with shell dead | S6 A1/A2 | PASS |
+114|| E9 | Channels round-trip and deny outsiders | S7 A1/A3 | PASS |
+115|| E10 | Diagnostics reproducible by a second person | S8 §2.3, run twice, by a different operator if available | PASS |
+[... truncated; continue with line=116 ...]

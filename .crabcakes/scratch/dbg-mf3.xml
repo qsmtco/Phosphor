@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="aosp" fetch="file:///tmp/up" />
+  <default remote="aosp" revision="refs/heads/main" />
+  <project name="platform/build" path="build" />
+  <project name="platform/frameworks/base" path="frameworks/base" />
+</manifest>

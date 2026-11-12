@@ -1,0 +1,124 @@
+[line 160 of docs/specs/P5-S2-selinux-foundation.md]
+160|# --- the policy artifact is read-only to every Phosphor domain (NEW-4) ---
+161|neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } \
+162|    phosphor_risk_policy_file:file { write append create rename setattr unlink };
+163|```
+164|
+165|**Notes the builder must resolve rather than silently drop:**
+166|- `neverallow phosphor_keygate self:binder *` — `neverallow` does not accept `*` as an operation set on every class. Write the enumerated form from C12 (`{ call transfer }`) or use the `-self` subtraction pattern; **[VERIFY AT BUILD: `m sepolicy_neverallows` reports the exact diagnostic]**. The *intent* is fixed: keygate has no binder.
+167|- The agentd device-node line is written here in prose **deliberately**: the concrete node set differs by device tree and a guessed list would either fail to compile or be vacuous. The builder must enumerate real types (telephony, camera, location, radio netlink) from the generated `vendor/google_devices/akita` policy and paste them; the auditor checks the line is non-empty and names at least the four categories in §8.
+168|- `neverallow { domain -phosphor_broker -self }:binder call` must **not** be widened to include `init`/`servicemanager` blindly — agentd calls broker through `servicemanager`, so `phosphor_agentd` needs `find` on `service_manager` but the `neverallow` is on `binder call`, not on `service_manager`. Keep the two classes separate.
+169|
+170|### 3.5 File types and contexts
+171|
+172|`public/file.te`:
+173|
+174|```
+175|type phosphor_risk_policy_file, file_type, system_file_type;
+176|type phosphor_agentd_data_file, file_type, data_file_type;
+177|```
+178|
+179|`public/file_contexts`:
+180|
+181|```
+182|/system/etc/phosphor(/.*)?                    u:object_r:phosphor_risk_policy_file:s0
+183|/system/bin/phosphor-agentd                   u:object_r:phosphor_agentd_exec:s0
+184|/system/bin/phosphor-keygate                  u:object_r:phosphor_keygate_exec:s0
+185|/data/misc/phosphor(/.*)?                     u:object_r:phosphor_agentd_data_file:s0
+186|```
+187|
+188|`public/seapp_contexts` (label the two apps to their domains):
+189|
+190|```
+191|user=_app isPrivApp=true seinfo=platform name=com.phosphor.shell   domain=phosphor_shell type=privapp_data_file levelFrom=user
+192|user=_app isPrivApp=true seinfo=platform name=com.phosphor.broker  domain=phosphor_broker type=privapp_data_file levelFrom=user
+193|```
+194|
+195|### 3.6 UIDs
+196|
+197|Four AIDs, declared in `system/core/include/private/android_filesystem_config.h` (C15) in the OEM range; `AID_PHOSPHOR_KEYGATE=2950`, `AID_PHOSPHOR_AGENTD=2951`, `AID_PHOSPHOR_BROKER=2952`, `AID_PHOSPHOR_SHELL=2953` — **[VERIFY AT BUILD: unused in this tree; the architecture leaves the broker's spelling provisional (§2.1/MINOR-1), the number is not]**.
+198|
+199|This is a **second third-party edit** beyond S1's single line. It is unavoidable — `user phosphor_agentd` in an `.rc` resolves through that header — so it is declared here rather than discovered in S4. S1's acceptance A5 is scoped to S1 and remains true; this spec adds 4 lines in 1 file and the auditor records it explicitly.
+200|
+201|---
+202|
+203|## 4. Implementation location
+204|
+205|| Artifact | Path |
+206||---|---|
+207|| All rules | `<tree>/packages/phosphor/sepolicy/{public,private}/*.te`, `*_contexts`, `file_contexts`, `seapp_contexts` |
+208|| Neverallow set | `<tree>/packages/phosphor/sepolicy/public/phosphor_neverallows.te` |
+209|| AID names | `<tree>/system/core/include/private/android_filesystem_config.h` (+4 lines) |
+210|| Wiring | `packages/phosphor/phosphor.mk` (`BOARD_PLAT_*_SEPOLICY_DIR`, created in S1/§3 B5) |
+211|
+212|**Never** in `system/sepolicy/**` directly (fork burden), and **never** in `BOARD_VENDOR_SEPOLICY_DIRS` (C14 — `neverallow` would be rejected).
+213|
+214|---
+215|
+216|## 5. Acceptance criteria
+217|
+218|**A1 — Policy compiles.** Primary gate:
+219|```bash
+220|m -j24 sepolicy_neverallows selinux_policy
+221|```
+222|Both targets exit 0; the `neverallow` checker reports no violation attributable to a Phosphor rule, and the generated `out/target/product/akita/system/etc/selinux/plat_property_contexts` (or the vendor variant it is merged into) contains both Phosphor property rows. **[VERIFY AT BUILD: exact target names — record what actually builds the policy in this tree; `selinux_policy` is the intended one and a full `m` also exercises it.]**
+223|
+224|**A2 — No dead rule.** For every rule file, run the build's own unused-rule diagnostic if available; otherwise prove liveness by the negative test: remove one `allow` line, rebuild, confirm the build fails for the expected reason, restore. At minimum this is done for `set_prop(phosphor_keygate, phosphor_safeboot_prop)` — a rule that does not compile is not a guarantee.
+225|
+226|**A3 — Every claim cited, in-tree, file:line.** The spec-to-policy traceability table (§2) is reproduced in the completion note **with each row re-verified**, and every `neverallow` in the policy names the file:line of the architecture text that requires it. Auditor samples ≥6 rows and re-checks them independently; a citation that does not open to the cited content fails the spec.
+227|
+228|**A4 — `:file *` form and the NEW-7 exclusion.** `rg -n 'mmap_exec_file_perms' packages/phosphor/sepolicy` → empty; every file-class `neverallow` ends in `:file *` (or an explicitly enumerated subset, with the reason recorded); `rg -c 'neverallow' packages/phosphor/sepolicy` matches the declared count.
+229|
+230|**A5 — R-2 is discharged.** Proof that the latch is writable by exactly the documented writer:
+231|- `phosphor_safeboot_latch_prop` exists as a distinct type (`rg` in the compiled `property_contexts`), **not** folded into `default_prop` (C6/C7);
+232|- exactly one non-init domain (`shell`, the adb path) holds `set` on it, and that grant is annotated with the §6.5/§6.5-residual reasoning (host+cable = trusted recovery authority);
+233|- no Phosphor domain holds `set` on it (`neverallow` or absence, whichever is expressible — see §3.4 note);
+234|- the completion note states plainly that **R-2 is closed as a policy item, and is only *exercised* on a device under S8's drill with PM approval.**
+235|
+236|**A6 — V-2's rule exists and is app-scoped.** `get_prop(appdomain, phosphor_safeboot_prop)` present in Phosphor-local `private/app.te`; the completion note states the accepted consequence (every app can read the flag) and that the mirror property is the escape hatch, not the plan.
+237|
+238|**A7 — No `set` grant is over-broad.** `rg -n 'property_service set' packages/phosphor/sepolicy` returns only: keygate→safeboot (via `set_prop`), shell→latch, and any explicitly justified init/host grant. Any other line fails.
+239|
+240|**A8 — Domain inventory matches §2.1 exactly.** Four domains, four exec/data types, no fifth Phosphor domain. `rg -c 'type phosphor_.*, domain;'` → 4.
+241|
+242|**A9 — Third-party surface declared.** Exactly one new file edited (`android_filesystem_config.h`, 4 lines) and zero files in `system/sepolicy/**` touched. `repo status` attached.
+243|
+244|**A10 — Fail-closed audit of polarity.** The policy must not contain a rule that lets any Phosphor domain **clear** a safe boot. Stated test: no Phosphor domain holds `set` on `phosphor_safeboot_prop` except keygate (C8: value is unpoliceable, so the guarantee is *access*, per NEW-6(a)).
+245|
+246|---
+247|
+248|## 6. Edge cases and failure modes
+249|
+250|| Case | Required handling |
+251||---|---|
+252|| `neverallow` in a device dir | Must compile-fail. Confirm C14 first; if the tree rejects it, the fix is the dir choice, **never** deleting the rule. |
+253|| `mmap_exec_file_perms` reintroduced by a helpful editor | Build fails. Cite NEW-7/C11 and restore `:file *`. |
+254|| `neverallow phosphor_keygate { system_prop -phosphor_safeboot_prop }:property_service set` — subtraction syntax | C10 shows the in-tree shape; if the build rejects the exact string, use the enumerated alternative and record it. Do not fall back to the blanket form (§8 explicitly forbids it). |
+255|| `exact bool` on a `persist.*` property | `persist.*` is `string`; use `exact string` for the latch (see §3.1) and keep `exact bool` only for the `sys.*` decision. Mixing them fails at init property-load time, not at build time — a silent-late failure. |
+256|| Latch value semantics | `persist.*` must be non-empty; init rejects empty values for `persist.`. `setprop persist.phosphor.safeboot 1` is the only meaningful write. |
+257|| Type exists but no context | Property falls back to `default_prop` (C6) and *silently* loses the grant. A4/A5's `rg` on the **compiled** contexts files is the check, not on the source. |
+258|| `app_domain()` needs a matching `seapp_contexts` entry | Both halves or the app runs as `untrusted_app` and none of the grants apply — silently. A3's liveness proof covers it. |
+259|| Four AIDs collide with an existing OEM AID | `[VERIFY]` at C15; a collision is an SELinux *and* a filesystem-ownership fault. |
+260|| `get_prop(appdomain, …)` looks like over-grant | It is intended (§3.3) and mirrors `app.te:40`. Do not narrow it to our two packages without recording why — the safe-boot flag must be readable by anything that must decide whether to be the surface. |
+261|
+262|---
+263|
+264|## 7. Definition of done / auditor checklist
+265|
+266|- [ ] A1–A10 pass with attached evidence.
+267|- [ ] Type table: 4 domains, 3 property types (`phosphor_safeboot_prop`, `phosphor_safeboot_latch_prop`, plus agent_state sharing the latch type), 4 file types.
+268|- [ ] Every `neverallow` traces to a §8 line, cited file:line.
+269|- [ ] **R-2 closed as policy** (latch type + documented writer) — and explicitly *not* claimed as device-verified.
+270|- [ ] **V-2's `get_prop` rule present**, app-scoped, consequence stated.
+271|- [ ] **NEW-7 honoured**: no `mmap_exec_file_perms`; `:file *`.
+272|- [ ] **NEW-4 honoured**: `phosphor_risk_policy_file` typed, write-banned across all four domains, read granted to agentd+broker only, absent for shell.
+273|- [ ] Zero edits under `system/sepolicy/**`; exactly one 4-line third-party edit declared.
+274|- [ ] No device operation performed.
+275|
+276|## 8. Open items created by this spec
+277|
+278|1. Actual sepolicy build target names in this tree (§5 A1) — builder.
+279|2. Concrete agentd device-node type list (§3.4 note) — builder, from `vendor/google_devices/akita`.
+280|3. `neverallow … self:binder *` enumeration legality (§3.4 note) — builder, resolved by compiler diagnostic.
+281|4. AID numbers confirmed free (§3.6) — builder.
+282|5. Whether `ro.boot.phosphor.safeboot` is readable by `phosphor_keygate` under its default `boot_prop`/`system_prop` context or needs an explicit `get_prop` — **carried from §10.2; gates S3, not S2's compilation.**

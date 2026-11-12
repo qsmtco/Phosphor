@@ -1,0 +1,146 @@
+[17 matches in 6 files]
+docs/handoffs/P5-S1-PHASE-1b-PLAN.md (34KB, 3 matches)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-103:cat vendor/adevtool/config/mk/google_devices/device/akita/device.mk
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-104:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-105:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-106:EXPECTED — `5` lines; `0` matches for our line; `git status` prints nothing (device.mk clean); content exactly:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-107:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-108:```make
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-109:$(call inherit-product, vendor/adevtool/config/mk/google_devices/device/platform/zuma/product-common.mk)
+  Line 110: TARGET_KERNEL_DIR ?= $(RELEASE_KERNEL_AKITA_DIR)
+  Line 111: TARGET_BOARD_KERNEL_HEADERS ?= $(RELEASE_KERNEL_AKITA_DIR)/kernel-headers
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-112:PRODUCT_PACKAGES += GosAkitaOverlay
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-113:include vendor/adevtool/config/mk/google_devices/device/platform/zuma/device.mk
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-114:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-115:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-116:> The last two path segments in the preflight capture (`P5-S1-PREFLIGHT-PROBE.md:97,101`) print as `platform/zuma/...`; the operative fact for S5 is the **line count (5)**, the **0 matches** for our string, and the **clean `git status`**. If the file's *content* differs from the block above but the three checks pass, record the actual content verbatim in the evidence bundle and continue — the append in S5 is position-independent.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-117:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-118:FAILED: `grep -c` returns `1` (line already applied) → **STOP**, report; do not append twice. `git status` shows device.mk already modified → **STOP**, report the diff; that is dirt this phase did not create and A5 would be unattributable.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-333:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-334:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-335:EXPECTED:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-336:- `wc -l` → `6` (was 5 in S0.4)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-337:- `tail -2` → the pre-existing last line, then `$(call inherit-product, packages/phosphor/phosphor.mk)`
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-338:- `--stat` → `1 file changed, 1 insertion(+)` for device.mk (other baseline entries unchanged)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-339:- the diff body → exactly one hunk, exactly one `+` line, **zero** `-` lines:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-340:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-341:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-342:@@ -3,3 +3,4 @@
+  Line 343: TARGET_BOARD_KERNEL_HEADERS ?= $(RELEASE_KERNEL_AKITA_DIR)/kernel-headers
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-344: PRODUCT_PACKAGES += GosAkitaOverlay
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-345: include vendor/adevtool/config/mk/google_devices/device/platform/zuma/device.mk
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-346:+$(call inherit-product, packages/phosphor/phosphor.mk)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-347:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-348:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-349:FAILED: any `-` line, more than one `+` line, or a whitespace-only difference in an existing line → **STOP**. Revert is *not* authorised here (a revert is a second unauthorized edit); report the diff and let the Supervisor decide. A `1 insertion(+), 1 deletion(-)` result specifically means the file's final newline was mishandled — report it; the fix is a `printf` with no trailing newline, but only on Supervisor instruction.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-350:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-351:---
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-352:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-353:## S6. Re-apply the AppArmor nsjail fix, then `adevtool generate-all -d akita`
+docs/specs/P5-S1-PREFLIGHT-PROBE.md (14KB, 6 matches)
+  Line 98: TARGET_KERNEL_DIR ?= $(RELEASE_KERNEL_AKITA_DIR)
+  Line 99: TARGET_BOARD_KERNEL_HEADERS ?= $(RELEASE_KERNEL_AKITA_DIR)/kernel-headers
+  Line 154: $ cat build/release/flag_values/cur/RELEASE_KERNEL_AKITA_DIR.textproto
+  Line 155: name: "RELEASE_KERNEL_AKITA_DIR"
+  Line 163: `envsetup.sh` exists (symlink to `make/envsetup.sh`), the `cur` release config exists, and critically **`RELEASE_KERNEL_AKITA_DIR` is defined in `cur`** — which is exactly the trap PROJECT-STATUS §6 warns about (`ap2a` defines none, producing an empty `TARGET_KERNEL_DIR` and a misleading board-config abort). `akita-cur-user` therefore resolves to a real product+release+variant triple.
+  Line 229: | 7 | A2 recipe paths resolve | **verified** (`cur` defines `RELEASE_KERNEL_AKITA_DIR`, avoiding the §6 trap) |
+docs/PROJECT-STATUS.md (40KB, 1 matches)
+  docs/PROJECT-STATUS.md-159:Source synced at tag `2026091900` with the **signed tag verified** (`Good "git" signature for contact@grapheneos.org`; `gpg.ssh.allowedSignersFile` set for the manifests repo). The device tree is **not** at `device/google/akita` — GrapheneOS keeps it in `vendor/adevtool/config/mk/google_devices/device/akita/`, so a missing `device/google/<codename>` is normal. `adevtool generate-all -d akita` produced `vendor/google_devices/akita` (~4.7k files, 1.3 GB, includes firmware); the lunch target afterw [... line cut ...]
+  docs/PROJECT-STATUS.md-160:
+  docs/PROJECT-STATUS.md-161:**Verified build recipe:**
+  docs/PROJECT-STATUS.md-162:
+  docs/PROJECT-STATUS.md-163:```bash
+  docs/PROJECT-STATUS.md-164:cd ~/projects/grapheneos-2026091900
+  docs/PROJECT-STATUS.md-165:source build/envsetup.sh
+  docs/PROJECT-STATUS.md-166:lunch akita-cur-user            # NOT akita-user, NOT akita-ap2a-user
+  docs/PROJECT-STATUS.md-167:m -j24 vendorbootimage vendorkernelbootimage target-files-package
+  docs/PROJECT-STATUS.md-168:```
+  docs/PROJECT-STATUS.md-169:
+  docs/PROJECT-STATUS.md-170:~1 h 06 m at `-j24`; 168,199 ninja steps; `out/` ends at ~107 GB. Outputs: 23 `.img` files in `out/target/product/akita/`, plus the signing input `out/target/product/akita/obj/PACKAGING/target_files_intermediates/akita-target_files.zip` (~3.6 GB, 8,841 files, 17 images inside). There is no `super.img` at this stage — only `super_empty.img`; assembled images come later. Expected fingerprint here ends `:user/test-keys` (unsigned test keys — correct before the release pipeline). Pixel 8a needs `ven [... line cut ...]
+  docs/PROJECT-STATUS.md-171:
+  Line 172: `lunch` needs `<product>-<release>-<variant>`; the release config is **`cur`** (GrapheneOS's own guide shows `lunch husky-cur-user`). Never pick it by listing `build/release/build_config/` — that directory holds only a stale AOSP `ap2a.scl` (SDK 34, UP1A, patch 2024-09-05) which `lunch` accepts but which defines no `RELEASE_KERNEL_AKITA_DIR`, producing `TARGET_KERNEL_DIR` empty and a misleading board-config abort on `vendor_kernel_boot.modules.load not found or empty`. Correct values live in `bu [... omitted end of long line]
+  docs/PROJECT-STATUS.md-173:
+  docs/PROJECT-STATUS.md-174:### Phase 3 — Signing, flashing, recovery — done, verified
+  docs/PROJECT-STATUS.md-175:Key generation → signing wrapper (`scripts/keys-sign-release.sh`) → release pipeline → unlock → flash → cryptographic verification → deliberate recovery reflash. Every destructive step was approved explicitly, for that operation, at the time. Detail: `docs/PHASE-3-FLASHING-AND-RECOVERY.md` (§9 = status and open items) and `docs/PHASE-3-KEY-MANAGEMENT-DESIGN.md`.
+  docs/PROJECT-STATUS.md-176:
+  docs/PROJECT-STATUS.md-177:Key generation follows GrapheneOS's documented procedure: `mkdir -p keys/<device> && cd keys/<device>`, then `../../development/tools/make_key <name> "/CN=.../"` for each of the nine, then `openssl genrsa 4096 | openssl pkcs8 -topk8 -scrypt -out avb.pem`, then `../../external/avb/avbtool.py extract_public_key --key avb.pem --output avb_pkmd.bin`.
+  docs/PROJECT-STATUS.md-178:
+  docs/PROJECT-STATUS.md-179:Release pipeline: Phase 2's `target_files.zip` is **not flashable**. `m otatools-package` → `script/finalize.sh` → `script/generate-release.sh akita <BUILD_NUMBER>` → output in `releases/<BUILD_NUMBER>/release-akita-<BUILD_NUMBER>/`. For fast iteration the raw images in `out/target/product/akita/` can be flashed directly with `fastboot flash <partition> <img>` — faster, but it skips the signing path, so it is not the production shape.
+  docs/PROJECT-STATUS.md-180:
+  docs/PROJECT-STATUS.md-181:---
+  docs/PROJECT-STATUS.md-182:
+  docs/PROJECT-STATUS.md-183:## 7. The build-plan map (what follows)
+  docs/PROJECT-STATUS.md-184:
+  docs/PROJECT-STATUS.md-185:| Phase | Name | Primary result |
+scripts/keys-generate.sh (9KB, 3 matches)
+  scripts/keys-generate.sh-53:       Run scripts/keys-yubikey-provision.sh first, and do not skip it —
+  scripts/keys-generate.sh-54:       generating keys before the passphrase can be sealed leaves it
+  scripts/keys-generate.sh-55:       unprotected in memory and in the shell."
+  scripts/keys-generate.sh-56:
+  scripts/keys-generate.sh-57:# Never silently replace an existing key set.
+  scripts/keys-generate.sh-58:if [[ -d $KEYS_DIR ]] && compgen -G "$KEYS_DIR/*.pk8" > /dev/null; then
+  scripts/keys-generate.sh-59:  fail "$KEYS_DIR already contains a key set.
+  scripts/keys-generate.sh-60:       These keys are permanent: replacing them requires flashing the device
+  scripts/keys-generate.sh-61:       again and a factory reset. Refusing to overwrite."
+  scripts/keys-generate.sh-62:fi
+  scripts/keys-generate.sh-63:
+  Line 64: echo "==> Generating a random passphrase for the key set"
+  scripts/keys-generate.sh-65:# Hex avoids any shell-quoting hazards; 32 bytes = 256 bits of entropy.
+  scripts/keys-generate.sh-66:PASSPHRASE="$(openssl rand -hex 32)"
+  scripts/keys-generate.sh-67:[[ ${#PASSPHRASE} -eq 64 ]] || fail "passphrase generation failed"
+  scripts/keys-generate.sh-68:echo "    generated (not displayed, not logged)"
+  scripts/keys-generate.sh-69:echo
+  scripts/keys-generate.sh-70:
+  scripts/keys-generate.sh-71:mkdir -p "$KEYS_DIR"
+  scripts/keys-generate.sh-72:chmod 700 "$KEY_DIR_ROOT" "$KEYS_DIR"
+  scripts/keys-generate.sh-73:
+  scripts/keys-generate.sh-74:# ------------------------------------------------------- generate the keys
+  scripts/keys-generate.sh-75:cd "$KEYS_DIR"
+  scripts/keys-generate.sh-76:
+  Line 77: echo "==> Generating nine APK signing keys (RSA 4096)"
+  scripts/keys-generate.sh-78:# make_key reads its password from stdin: a blank line means "no password".
+  scripts/keys-generate.sh-79:# The set is left unencrypted here and encrypted in one pass below, which is
+  scripts/keys-generate.sh-80:# how GrapheneOS's own tooling expects to do it (encrypt-keys handles both the
+  scripts/keys-generate.sh-81:# .pk8 files and avb.pem together, and needs one passphrase for all of them).
+  scripts/keys-generate.sh-82:for key in "${SIGNING_KEYS[@]}"; do
+  scripts/keys-generate.sh-83:  # make_key's own EXIT trap is `trap 'rm -rf ${tmpdir}; echo; exit 1' EXIT INT
+  scripts/keys-generate.sh-84:  # QUIT`, so it returns 1 even when it has produced both files correctly.
+  scripts/keys-generate.sh-85:  # Upstream never notices because nothing calls it under `set -e`. Tolerate the
+  scripts/keys-generate.sh-86:  # status and verify the artifacts instead: the files are the ground truth.
+  scripts/keys-generate.sh-87:  printf '\n' | "$TREE/development/tools/make_key" "$key" "$CN" rsa > /dev/null || true
+  scripts/keys-generate.sh-88:  [[ -s "$key.pk8" && -s "$key.x509.pem" ]] \
+  scripts/keys-generate.sh-89:    || fail "make_key did not produce $key.pk8 / $key.x509.pem"
+  scripts/keys-generate.sh-90:  printf '    %s.pk8 + %s.x509.pem\n' "$key" "$key"
+  scripts/keys-generate.sh-91:done
+  scripts/keys-generate.sh-92:echo
+  scripts/keys-generate.sh-93:
+  Line 94: echo "==> Generating the AVB (verified boot) key"
+  scripts/keys-generate.sh-95:# Unencrypted at this point so avbtool can read it without a prompt.
+  scripts/keys-generate.sh-96:openssl genrsa -out avb.pem 4096 2>/dev/null
+  scripts/keys-generate.sh-97:chmod 600 avb.pem
+  scripts/keys-generate.sh-98:echo "    avb.pem"
+  scripts/keys-generate.sh-99:echo
+  scripts/keys-generate.sh-100:
+  scripts/keys-generate.sh-101:echo "==> Extracting AVB public key metadata (avb_pkmd.bin)"
+  scripts/keys-generate.sh-102:# This is the value that gets embedded in vbmeta and that the bootloader would
+  scripts/keys-generate.sh-103:# verify against. Not needed to produce a signed release, but it is the record
+  scripts/keys-generate.sh-104:# of which key this device trusts.
+  scripts/keys-generate.sh-105:"$TREE/external/avb/avbtool.py" extract_public_key --key avb.pem --output avb_pkmd.bin
+scripts/keys-yubikey-provision.sh (12KB, 1 matches)
+  scripts/keys-yubikey-provision.sh-171:if [[ $skip_keygen -eq 1 ]]; then
+  scripts/keys-yubikey-provision.sh-172:  echo "==> Keeping the existing key in slot $SLOT; continuing to the certificate"
+  scripts/keys-yubikey-provision.sh-173:  [[ -f $PUB ]] || fail "the public key file $PUB is missing — cannot continue.
+  scripts/keys-yubikey-provision.sh-174:       Delete the key in slot $SLOT and re-run to regenerate both."
+  scripts/keys-yubikey-provision.sh-175:else
+  Line 176: echo "==> Generating an RSA-2048 key in slot $SLOT"
+  scripts/keys-yubikey-provision.sh-177:  echo "    The private key is generated on the token and never leaves it."
+  scripts/keys-yubikey-provision.sh-178:  echo "    ykman will prompt for the Management Key. The factory default is the"
+  scripts/keys-yubikey-provision.sh-179:  echo "    AES-192 value 010203040506070801020304050607080102030405060708 —"
+  scripts/keys-yubikey-provision.sh-180:  echo "    publicly known, and harmless here: it authorises key management only"
+  scripts/keys-yubikey-provision.sh-181:  echo "    and cannot decrypt anything. The PIN is what gates unsealing."
+docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md (23KB, 3 matches)
+  Line 189: `RELEASE_KERNEL_AKITA_DIR`, so `TARGET_KERNEL_DIR` resolves empty and the build
+  Line 228: build/release/flag_values/cur/RELEASE_KERNEL_AKITA_DIR.textproto
+  Line 384: was empty because `ap2a` defines no `RELEASE_KERNEL_AKITA_DIR`. The file
+
+[Open with read_file line=N only to edit.]

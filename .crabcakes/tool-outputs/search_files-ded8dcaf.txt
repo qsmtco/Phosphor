@@ -1,0 +1,131 @@
+[5 matches in 5 files]
+docs/handoffs/P5-S1-PHASE-1b-PLAN.md (34KB, 1 matches)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-378:FAILED: non-zero exit, or output ends at the nsjail stderr line with no completion (`spawnAsync` abort) → **STOP**. Evidence to paste: `tail -40 /home/cptjaqx/adevtool-generate-all.log`, the exit code, and `git -C vendor/google_devices status --porcelain | head`. Do not re-run blindly; do not hand-edit `vendor/google_devices/akita` — a hand-edit is silently lost on the next `generate-all` (`P5-S1-build-integration.md:188`).
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-379:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-380:**S6.3 — target-state check: regenerated, not hand-edited**
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-381:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-382:```bash
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-383:cd /home/cptjaqx/projects/grapheneos-2026091900
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-384:grep -rn 'packages/phosphor' vendor/google_devices/akita/ | wc -l
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-385:grep -n 'inherit-product' vendor/google_devices/akita/akita.mk
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-386:grep -rn 'phosphor' vendor/google_devices/akita/ | wc -l
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-387:git -C vendor/adevtool diff -- config/mk/google_devices/device/akita/device.mk | grep -c '^+.*phosphor'
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-388:repo status -j24
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-389:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-390:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-391:EXPECTED:
+  Line 392: - `0` — our line is **absent** from the generated tree. This is the pass condition: the inherit arrives through `akita.mk`'s existing inheritance of `device.mk` (preflight line 104: `10:$(call inherit-product, vendor/adevtool/config/mk/google_devices/device/akita/device.mk)`), it is not copied into generated files.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-393:- `akita.mk:10:$(call inherit-product, vendor/adevtool/config/mk/google_devices/device/akita/device.mk)` — unchanged.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-394:- `0` — no `phosphor` string anywhere in the generated project.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-395:- `1` — the seam line still exists in the *config* file after regeneration (proves generate-all did not revert our source-config edit).
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-396:- `repo status -j24`: exactly two projects — `vendor/adevtool` with its five entries (the four baseline entries **plus** `device.mk`), and nothing else dirty. `vendor/google_devices` must **not** appear (a deterministic regeneration produces no diff).
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-397:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-398:FAILED:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-399:- `grep -c 'packages/phosphor' vendor/google_devices/akita/` > 0 → our line is present in the **generated** tree: it was hand-edited at some point, or generate-all copied it. **STOP**, report the matching lines. Per `P5-S1-build-integration.md:188` the required handling is regenerate, never hand-edit — and since we just regenerated, a non-zero count means the seam is in the wrong file, which is a spec-level find.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-400:- `vendor/google_devices` shows dirt in `repo status` → **STOP**, paste `git -C vendor/google_devices status --porcelain`; report whether the diff includes namespace/overlay churn (regeneration non-determinism) — that is an A5 failure, not something to revert.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-401:- the `-1` case (count `0` for the seam line in the config file) → **STOP**: generate-all reverted `device.mk`, meaning the seam must be applied to a different file, which contradicts B4.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-402:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-403:---
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-404:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-405:## S7. Re-pin the manifest (A6b)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-406:
+docs/specs/P5-S1-build-integration.md (17KB, 1 matches)
+  docs/specs/P5-S1-build-integration.md-64:  risk-policy/risk-policy.json    # read-only policy artifact (typed by S2, consumed by S6/S7)
+  docs/specs/P5-S1-build-integration.md-65:  init/                           # empty in S1; phosphor_keygate.rc (S3), phosphor_agentd.rc (S4)
+  docs/specs/P5-S1-build-integration.md-66:  services/PhosphorAgentd/        # cc_binary phosphor-agentd   (S4)
+  docs/specs/P5-S1-build-integration.md-67:  services/PhosphorKeygate/       # cc_binary phosphor-keygate  (S3)
+  docs/specs/P5-S1-build-integration.md-68:  services/PhosphorDiagnostics/   # cc_binary phosphor-ctl      (S8)
+  docs/specs/P5-S1-build-integration.md-69:  services/PhosphorIpc/           # AIDL + wire headers shared by S4/S6/S7
+  docs/specs/P5-S1-build-integration.md-70:  apps/PhosphorShell/             # android_app PhosphorShell   (S5)
+  docs/specs/P5-S1-build-integration.md-71:  apps/PhosphorBroker/            # android_app PhosphorBroker  (S6)
+  docs/specs/P5-S1-build-integration.md-72:```
+  docs/specs/P5-S1-build-integration.md-73:
+  docs/specs/P5-S1-build-integration.md-74:**B3 — Module definitions.** `cc_binary` modules use `stem:` equal to the module name so the installed filename is `phosphor-agentd` etc.; `android_app` modules use `platform_apis: true`, `certificate: "platform"`, `privileged: true`, and a minimal valid `AndroidManifest.xml` (package only, no `<application>` components beyond `android:label`). No module declares `init_rc` in S1 — the `.rc` install is part of S3/S4 so that S1 cannot start anything at boot. With `privileged: true`, Soong installs [... line cut ...]
+  docs/specs/P5-S1-build-integration.md-75:
+  docs/specs/P5-S1-build-integration.md-76:**B4 — Product hook, exactly one line in a third-party file.** `packages/phosphor/phosphor.mk` is inherited by appending exactly one line to `vendor/adevtool/config/mk/google_devices/device/akita/device.mk`:
+  docs/specs/P5-S1-build-integration.md-77:
+  docs/specs/P5-S1-build-integration.md-78:```make
+  docs/specs/P5-S1-build-integration.md-79:$(call inherit-product, packages/phosphor/phosphor.mk)
+  docs/specs/P5-S1-build-integration.md-80:```
+  docs/specs/P5-S1-build-integration.md-81:
+  Line 82: This is the only writable seam: the generated `vendor/google_devices/akita/akita.mk` inherits that file (`docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md` §4), and product inheritance is not otherwise expressible from outside the product's own makefile chain. The consequence is **mandatory**: `PATH="$HOME/android-sdk/node24/bin:$PATH" vendor/adevtool/bin/run generate-all -d akita` must be re-run so `vendor/google_devices/akita` is regenerated from its source config rather than hand-edited. (Trap: ad [... omitted end of long line]
+  docs/specs/P5-S1-build-integration.md-83:
+  docs/specs/P5-S1-build-integration.md-84:**B5 — `phosphor.mk` content.**
+  docs/specs/P5-S1-build-integration.md-85:
+  docs/specs/P5-S1-build-integration.md-86:```make
+  docs/specs/P5-S1-build-integration.md-87:PRODUCT_PACKAGES += \
+  docs/specs/P5-S1-build-integration.md-88:    phosphor-agentd \
+  docs/specs/P5-S1-build-integration.md-89:    phosphor-keygate \
+  docs/specs/P5-S1-build-integration.md-90:    phosphor-ctl \
+  docs/specs/P5-S1-build-integration.md-91:    PhosphorShell \
+  docs/specs/P5-S1-build-integration.md-92:    PhosphorBroker
+  docs/specs/P5-S1-build-integration.md-93:
+  docs/specs/P5-S1-build-integration.md-94:PRODUCT_COPY_FILES += \
+  docs/specs/P5-S1-build-integration.md-95:    packages/phosphor/risk-policy/risk-policy.json:$(TARGET_COPY_OUT_SYSTEM)/etc/phosphor/risk-policy.json
+  docs/specs/P5-S1-build-integration.md-96:
+  docs/specs/P5-S1-build-integration.md-97:SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += packages/phosphor/sepolicy/public
+  docs/specs/P5-S1-build-integration.md-98:SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += packages/phosphor/sepolicy/private
+  docs/specs/P5-S1-build-integration.md-99:```
+  docs/specs/P5-S1-build-integration.md-100:
+docs/specs/P5-S1-PREFLIGHT-PROBE.md (14KB, 1 matches)
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-87:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-88:No namespace anywhere in the `packages/` chain, no `Android.bp` at the `packages/` root to carry one, and the tree root's `Android.bp` declares none. `packages/phosphor` does not exist yet — correct for pre-S1. Modules added there will be visible to Soong without a namespace declaration or `import`.
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-89:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-90:### Claim 4 — adevtool `device.mk` seam — **no drift — claim 4 verified**
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-91:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-92:```
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-93:$ ls -l vendor/adevtool/config/mk/google_devices/device/akita/device.mk
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-94:-rw-rw-r-- 1 cptjaqx cptjaqx 333 Sep 24 11:04 .../device.mk
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-95:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-96:$ cat .../device.mk
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-97:$(call inherit-product, vendor/adevtool/config/mk/google_devices/platform/zuma/product-common.mk)
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-98:TARGET_KERNEL_DIR ?= $(RELEASE_KERNEL_AKITA_DIR)
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-99:TARGET_BOARD_KERNEL_HEADERS ?= $(RELEASE_KERNEL_AKITA_DIR)/kernel-headers
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-100:PRODUCT_PACKAGES += GosAkitaOverlay
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-101:include vendor/adevtool/config/mk/google_devices/platform/zuma/device.mk
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-102:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-103:$ grep -n 'device.mk\|inherit-product' vendor/google_devices/akita/akita.mk
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-104:10:$(call inherit-product, vendor/adevtool/config/mk/google_devices/device/akita/device.mk)
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-105:```
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-106:
+  Line 107: `inherit-product` is the established convention in that file (line 1 uses it), so B4's appended line matches local style. The generated `akita.mk:10` does inherit it, so the seam is real and one line is sufficient. `PRODUCT_NAME := akita` (`akita.mk:20`) confirms the product identity lunch will resolve.
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-108:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-109:### Claim 5 — `.repo/local_manifests/`, repo baseline, `out/` baseline — **no drift — claim 5 verified, with one baseline caveat (see BUG #2)**
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-110:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-111:```
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-112:$ ls -d .repo
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-113:.repo
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-114:$ ls -la .repo/local_manifests/
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-115:ls: cannot access '.repo/local_manifests/': No such file or directory
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-116:$ ls -ld .repo
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-117:drwxrwxr-x 7 cptjaqx cptjaqx 4096 Sep 24 11:22 .repo      # WRITABLE
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-118:```
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-119:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-120:`.repo` is a real repo checkout (`manifest.xml`, `manifests/`, `project-objects/`, `projects/`, `manifest-pinned.xml` all present) and is writable, so `local_manifests/` is creatable — `repo` creates the directory on demand. `.repo/manifest.xml` is the standard generated include of `default.xml`, and its own comment directs customisation to `local_manifests/`, confirming B6's mechanism.
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-121:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-122:**`repo status -j24` baseline (A5 dirt baseline), captured verbatim:**
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-123:
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-124:```
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-125:project vendor/adevtool/                        (*** NO BRANCH ***)
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-126: --	.yarn/install-state.gz
+  docs/specs/P5-S1-PREFLIGHT-PROBE.md-127: --	.yarnrc.yml
+docs/specs/SPECS-AUDIT.md (30KB, 1 matches)
+  docs/specs/SPECS-AUDIT.md-137:| X5 | No spec requires a capability another spec defers | all | **Holds.** The §3 capability set is uniformly deferred (S6 A7 row-by-row, S8 E12); S7's C-D provisioning deferral is consistent; S5's `RECORD_AUDIO` is declared-but-unused and stated as such |
+  docs/specs/SPECS-AUDIT.md-138:| X6 | Health-surface ownership: S4 defines, S7 finalises liveness, S8 consumes | S4, S7, S8 | **Holds.** S7 §2.4 explicitly adds no fourth surface |
+  docs/specs/SPECS-AUDIT.md-139:| X7 | Frame-size coupling: S4 open item 2 ↔ S7 §2.1 | S4, S7 | **Holds.** S7 freezes it at 1 MiB and names the Phase 6 chunking review |
+  docs/specs/SPECS-AUDIT.md-140:
+  docs/specs/SPECS-AUDIT.md-141:**On the two items Coder surfaced:**
+  docs/specs/SPECS-AUDIT.md-142:
+  docs/specs/SPECS-AUDIT.md-143:- *The fifth process* — real and **worse than "surfaced"**: S2's A8 is an acceptance gate that fails once S1 lands, and S2 is accepted before S8 can raise it (F5).
+  Line 144: - *S1's one adevtool-owned `device.mk` line + `generate-all` re-run* — **verified fully correct.** `vendor/adevtool/config/mk/google_devices/device/akita/device.mk` exists (333 bytes) and `vendor/google_devices/akita/akita.mk:10` does `$(call inherit-product, vendor/adevtool/config/mk/google_devices/device/akita/device.mk)`. The seam S1 picks is the right one, one line is genuinely sufficient, and the regenerate is genuinely mandatory because the generated tree is overwritten. Best-verified clai [... omitted end of long line]
+  docs/specs/SPECS-AUDIT.md-145:
+  docs/specs/SPECS-AUDIT.md-146:---
+  docs/specs/SPECS-AUDIT.md-147:
+  docs/specs/SPECS-AUDIT.md-148:## Build reality (criterion 4)
+  docs/specs/SPECS-AUDIT.md-149:
+  docs/specs/SPECS-AUDIT.md-150:| S1 claim | Verification | Result |
+  docs/specs/SPECS-AUDIT.md-151:|---|---|---|
+docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md (23KB, 1 matches)
+  Line 210: and the generated `akita.mk` hard-errors if it does not match:
+
+[Open with read_file line=N only to edit.]

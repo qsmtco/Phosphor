@@ -1,0 +1,103 @@
+[30 matches in 7 files]
+docs/specs/P5-S1-PHASE-1b-REVISION-ORDER.md (8KB, 4 matches)
+  Line 29: - Fix: replace with evidence that exists for an untracked tree — (a) pre-run inventory `find vendor/google_devices/akita -type f | sort | xargs sha256sum > /tmp/akita-before.sha256` (4739 files today), (b) the same after, (c) an mtime/`find -newermt` check, (d) the generate-all log. Mark the `git -C vendor/google_devices` command invalid, or delete it.
+  Line 32: - Three of five already pass before any work (`packages/phosphor` → 0, `inherit-product` present in `akita.mk`, `phosphor` → 0), and the log check is only `tail -30` with no concrete expected string. A generate-all that silently did nothing passes completely — exactly the hand-edit gap the spec assigns to this phase (`P5-S1-build-integration.md:63,188`).
+  Line 41: - Fix: write to `.repo/manifest-pinned.xml.new`, capture `EXIT=$?`, verify 40-hex + `N+2`, then `mv` only after both pass. Same shape as the generate-all log.
+  Line 44: - `grep -rn 'X' dir/ | wc -l` prints `0` when `dir/` does not exist (grep errors on stderr, `wc` prints 0) — so the most likely generate-all failure mode renders as the strongest pass. Occurrences: S6.3 lines ~384, ~386 and S8 ~441.
+docs/handoffs/P5-S1-PHASE-1b-PLAN.md (34KB, 13 matches)
+  Line 8: **Scope of Phase 1b (in):** bare mirror of the Phase-1a repo; `.repo/local_manifests/phosphor.xml`; `repo sync -n` then a project-only `repo sync`; A1 assertion; the single `device.mk` line; `adevtool generate-all -d akita`; re-pin `manifest-pinned.xml`; A5 `repo status -j24`; target-state check on `vendor/google_devices/akita`.
+  Line 49: GALOG     = /home/cptjaqx/adevtool-generate-all.log
+  Line 353: ## S6. Re-apply the AppArmor nsjail fix, then `adevtool generate-all -d akita`
+  Line 372: PATH="$HOME/android-sdk/node24/bin:$PATH" vendor/adevtool/bin/run generate-all -d akita 2>&1 | tee /home/cptjaqx/adevtool-generate-all.log | tail -30
+  Line 376: EXPECTED: exit **0**; the tail shows the generator's completion lines; the log file exists and is non-empty. A `Build sandboxing disabled due to nsjail error.` line is **expected and not a failure** — but note it: if it appears, the generate-all still succeeded, and Phase 1c will see the same line from `m`.
+  Line 378: FAILED: non-zero exit, or output ends at the nsjail stderr line with no completion (`spawnAsync` abort) → **STOP**. Evidence to paste: `tail -40 /home/cptjaqx/adevtool-generate-all.log`, the exit code, and `git -C vendor/google_devices status --porcelain | head`. Do not re-run blindly; do not hand-edit `vendor/google_devices/akita` — a hand-edit is silently lost on the next `generate-all` (`P5-S1-build-integration.md:188`).
+  Line 395: - `1` — the seam line still exists in the *config* file after regeneration (proves generate-all did not revert our source-config edit).
+  Line 399: - `grep -c 'packages/phosphor' vendor/google_devices/akita/` > 0 → our line is present in the **generated** tree: it was hand-edited at some point, or generate-all copied it. **STOP**, report the matching lines. Per `P5-S1-build-integration.md:188` the required handling is regenerate, never hand-edit — and since we just regenerated, a non-zero count means the seam is in the wrong file, which is a spec-level find.
+  Line 401: - the `-1` case (count `0` for the seam line in the config file) → **STOP**: generate-all reverted `device.mk`, meaning the seam must be applied to a different file, which contradicts B4.
+  Line 442: echo '== generate-all log tail =='
+  Line 443: tail -20 /home/cptjaqx/adevtool-generate-all.log
+  Line 488: - [ ] S6.2 generate-all -d akita exit 0 with node24 PATH — evidence: <tail + EXIT + log path>
+  Line 507: 6. **R-6 (informational, for Phase 1c)** — `generate-all` rewrites `vendor/google_devices/akita` wholesale (`P5-S1-build-integration.md:212` requires this cost be stated in the completion note). S6.3 asserts the regeneration is diff-free against the tree; if it is not, the dirt is a spec-level A5 finding, not a 1b defect. Phase 1c should also expect the `Build sandboxing disabled due to nsjail error.` stderr line from `m` and must not read it as failure.
+docs/specs/P5-S1-PHASE-INSTRUCTIONS.md (7KB, 2 matches)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-46:- COMPLETENESS checklist: one `[x]` or `[not done]` line per file above, each with evidence
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-47:- "Related issues found, not fixed in this phase" section (mandatory even if empty)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-48:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-49:**Rule:** invoke `/home/cptjaqx/projects/Phosphor/.crabcakes/prompts/steelFramedCodeWriter.md` this round. Word marker: **please write**.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-50:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-51:---
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-52:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-53:## Handoff discipline (from Phase 1b, Debugger process fix 2026-11-10)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-54:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-55:Coder's seat cannot write outside `/home/cptjaqx/projects/Phosphor`. For tree operations, Coder authors the exact content/commands to `/home/cptjaqx/projects/Phosphor/docs/handoffs/P5-S1-PHASE-<N>-PLAN.md` (inside its sandbox), the Supervisor transcribes mechanically, and the plan file is the fidelity authority for the audit. Chat reports are not the authority.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-56:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-57:---
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-58:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-59:## Phase 1b — Tree integration (Coder) — after 1a audit is clean
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-60:
+  Line 61: **Scope:** bare mirror at `/home/cptjaqx/projects/Phosphor-platform.git`; `.repo/local_manifests/phosphor.xml` (B6 development variant with the corrected `file:///home/cptjaqx/...` path); `repo sync -n` (dry) then `repo sync` for our project only; `repo manifest | grep -c 'path="packages/phosphor"'` → 1 (A1); +1 line in `vendor/adevtool/.../device.mk`; `PATH="$HOME/android-sdk/node24/bin:$PATH" vendor/adevtool/bin/run generate-all -d akita` (B4; re-apply `scripts/host-fix-nsjail-userns.sh` first [... omitted end of long line]
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-62:
+  Line 63: **Evidence:** `repo status -j24` full output; `git diff` of the `device.mk` one-liner; generate-all log tail; pinned-manifest line-count delta. Stop and report if `vendor/google_devices/akita` shows the line hand-edited.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-64:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-65:**Rule:** steelFramedCodeWriter.md again. Word marker: **please proceed**.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-66:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-67:---
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-68:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-69:## Phase 1c — Full acceptance build (Coder, ~1h06m — run under `nohup` with log polling)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-70:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-71:**Scope:** A2 recipe verbatim; judge on exit code 0, absence of `ninja: build stopped` / `FAILED:` (the `Build sandboxing disabled due to nsjail error.` stderr line is EXPECTED, not a failure); record `out/` delta and `Build Succeeded: N steps` delta vs 168,199. **B5 [VERIFY AT BUILD]:** confirm `rg -n 'SYSTEM_EXT_(PUBLIC|PRIVATE)_SEPOLICY_DIRS' build/make/core` spelling before trusting `phosphor.mk`; if the tree differs, STOP and report (never fall back to `BOARD_PLAT_*`).
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-72:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-73:**Evidence:** A3 (three binaries `ls -l`; `aapt2 dump badging` on both `priv-app` APKs; `grep -cE '^(phosphor-|Phosphor)' product_packages.txt` → exactly 5), A4 greps, A5 `repo status`, A6 completion note, A7 no-device confirmation. Attach all command outputs.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-74:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-75:**Rule:** steelFramedCodeWriter.md again. Word marker: **write when done**.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-76:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-77:---
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-78:
+docs/specs/P5-S1-build-integration.md (17KB, 5 matches)
+  Line 44: | `adevtool generate-all` traps (node24 PATH, nsjail/userns AppArmor, `spawnAsync` treats stderr as fatal) | `docs/PROJECT-STATUS.md` §9 ("Platform / build") |
+  Line 82: This is the only writable seam: the generated `vendor/google_devices/akita/akita.mk` inherits that file (`docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md` §4), and product inheritance is not otherwise expressible from outside the product's own makefile chain. The consequence is **mandatory**: `PATH="$HOME/android-sdk/node24/bin:$PATH" vendor/adevtool/bin/run generate-all -d akita` must be re-run so `vendor/google_devices/akita` is regenerated from its source config rather than hand-edited. (Trap: ad [... omitted end of long line]
+  Line 187: | `adevtool generate-all` aborts on the nsjail stderr line | Re-apply `scripts/host-fix-nsjail-userns.sh`; do **not** judge the fix with a bare `nsjail` probe (it fails even when correct — PROJECT-STATUS §9). |
+  Line 188: | `vendor/google_devices/akita` shows the line as hand-edited | Stop; regenerate. A hand-edit is silently lost on the next `generate-all`. |
+  Line 212: 3. Completion note must state the adevtool regeneration cost (full `generate-all` run, `vendor/google_devices/akita` rewritten) so later specs do not treat it as free.
+docs/specs/SPECS-AUDIT.md (30KB, 1 matches)
+  docs/specs/SPECS-AUDIT.md-128:
+  docs/specs/SPECS-AUDIT.md-129:## Cross-spec consistency
+  docs/specs/SPECS-AUDIT.md-130:
+  docs/specs/SPECS-AUDIT.md-131:| # | Issue | Specs | Status |
+  docs/specs/SPECS-AUDIT.md-132:|---|---|---|---|
+  docs/specs/SPECS-AUDIT.md-133:| X1 | Four domains (S2 A8) vs five installed modules (S1) vs "resolve in S8" | S1, S2, S8 | **Unresolved** — F5; fixable in S2 today |
+  docs/specs/SPECS-AUDIT.md-134:| X2 | S6 A1/A2 need S7's client; S6 does not depend on S7 | S6, S7 | **Unsatisfied dependency** — F4 |
+  docs/specs/SPECS-AUDIT.md-135:| X3 | Latch writer required by S2 A5/A7, exercised by S3 A1 and S8 D3/D7, granted by no rule | S2, S3, S8 | **Broken chain** — F2 |
+  docs/specs/SPECS-AUDIT.md-136:| X4 | Dependency order S1 → S2 → S3–S7 → S8 | all | **Holds**, except the S6↔S7 co-dependency (F4) |
+  docs/specs/SPECS-AUDIT.md-137:| X5 | No spec requires a capability another spec defers | all | **Holds.** The §3 capability set is uniformly deferred (S6 A7 row-by-row, S8 E12); S7's C-D provisioning deferral is consistent; S5's `RECORD_AUDIO` is declared-but-unused and stated as such |
+  docs/specs/SPECS-AUDIT.md-138:| X6 | Health-surface ownership: S4 defines, S7 finalises liveness, S8 consumes | S4, S7, S8 | **Holds.** S7 §2.4 explicitly adds no fourth surface |
+  docs/specs/SPECS-AUDIT.md-139:| X7 | Frame-size coupling: S4 open item 2 ↔ S7 §2.1 | S4, S7 | **Holds.** S7 freezes it at 1 MiB and names the Phase 6 chunking review |
+  docs/specs/SPECS-AUDIT.md-140:
+  docs/specs/SPECS-AUDIT.md-141:**On the two items Coder surfaced:**
+  docs/specs/SPECS-AUDIT.md-142:
+  docs/specs/SPECS-AUDIT.md-143:- *The fifth process* — real and **worse than "surfaced"**: S2's A8 is an acceptance gate that fails once S1 lands, and S2 is accepted before S8 can raise it (F5).
+  Line 144: - *S1's one adevtool-owned `device.mk` line + `generate-all` re-run* — **verified fully correct.** `vendor/adevtool/config/mk/google_devices/device/akita/device.mk` exists (333 bytes) and `vendor/google_devices/akita/akita.mk:10` does `$(call inherit-product, vendor/adevtool/config/mk/google_devices/device/akita/device.mk)`. The seam S1 picks is the right one, one line is genuinely sufficient, and the regenerate is genuinely mandatory because the generated tree is overwritten. Best-verified clai [... omitted end of long line]
+  docs/specs/SPECS-AUDIT.md-145:
+  docs/specs/SPECS-AUDIT.md-146:---
+  docs/specs/SPECS-AUDIT.md-147:
+  docs/specs/SPECS-AUDIT.md-148:## Build reality (criterion 4)
+  docs/specs/SPECS-AUDIT.md-149:
+  docs/specs/SPECS-AUDIT.md-150:| S1 claim | Verification | Result |
+  docs/specs/SPECS-AUDIT.md-151:|---|---|---|
+  docs/specs/SPECS-AUDIT.md-152:| Recipe: `source build/envsetup.sh` → `lunch akita-cur-user` → `m -j24 vendorbootimage vendorkernelbootimage target-files-package` | `docs/PROJECT-STATUS.md:163-168` | **Byte-identical** — same three lines, flags, targets, variant |
+  docs/specs/SPECS-AUDIT.md-153:| `device.mk` is the writable seam; `akita.mk` inherits it | `akita.mk:10` | PASS |
+  docs/specs/SPECS-AUDIT.md-154:| `product_packages.txt` is a real build artifact | `product_packages_file.go:36`; present in `out/` (1661 lines) | PASS — not invented (see R2) |
+  docs/specs/SPECS-AUDIT.md-155:| The count of 5 is achievable | top-level `$(PRODUCT_PACKAGES)` only; 0 pre-existing matches | PASS (see R2) |
+  docs/specs/SPECS-AUDIT.md-156:| `aapt2` at `out/host/linux-x86/bin/aapt2` | present | PASS |
+  docs/specs/SPECS-AUDIT.md-157:| `prebuilts/jdk/jdk25/linux-x86/bin/java` | present | PASS |
+  docs/specs/SPECS-AUDIT.md-158:| `BOARD_PLAT_*_SEPOLICY_DIR` | `KATI_obsolete_var`, fatal (tested with `ckati`) | **FAIL — F1** |
+  docs/specs/SPECS-AUDIT.md-159:| `selinux_policy` / `sepolicy_neverallows` targets | `build/make/core/Makefile:5450`; `Android.bp:943,1300` | PASS |
+  docs/specs/SPECS-AUDIT.md-160:| AID numbers 2950-2953 free | OEM range 2900-2999; no collisions | PASS (path wrong — F3) |
+docs/PROJECT-STATUS.md (40KB, 2 matches)
+  Line 159: Source synced at tag `2026091900` with the **signed tag verified** (`Good "git" signature for contact@grapheneos.org`; `gpg.ssh.allowedSignersFile` set for the manifests repo). The device tree is **not** at `device/google/akita` — GrapheneOS keeps it in `vendor/adevtool/config/mk/google_devices/device/akita/`, so a missing `device/google/<codename>` is normal. `adevtool generate-all -d akita` produced `vendor/google_devices/akita` (~4.7k files, 1.3 GB, includes firmware); the lunch target afterw [... omitted end of long line]
+  Line 256: - **nsjail vs Ubuntu's userns restriction.** `kernel.apparmor_restrict_unprivileged_userns=1` makes AOSP's build-sandbox probe fail, so soong prints `Build sandboxing disabled due to nsjail error.` on stderr and continues with the sandbox off — **the build itself still succeeds**. But **adevtool's `spawnAsync` treats any unexpected stderr line as fatal** and aborts `generate-all` on exactly that line. There is no knob to silence it (`USE_NINJA_SANDBOX` does not exist in the tree; `build/soong/ui [... omitted end of long line]
+docs/PHASE-2-SOURCE-AND-BUILD-FOUNDATION.md (23KB, 3 matches)
+  Line 123: PATH="$HOME/android-sdk/node24/bin:$PATH" vendor/adevtool/bin/run generate-all -d akita
+  Line 334: **Symptom.** `adevtool generate-all` aborted with:
+  Line 578: vendor/adevtool/bin/run generate-all -d akita
+
+[Open with read_file line=N only to edit.]

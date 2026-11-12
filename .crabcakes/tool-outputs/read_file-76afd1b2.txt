@@ -1,0 +1,189 @@
+[line 1 of .crabcakes/prompts/implementationLoop.md]
+1|# Implementation Loop
+2|
+3|> **Status:** Authoritative loop architecture. All implementation work in this project that goes through a supervisor + builder + auditor trio MUST follow this loop. Deviations must be explicitly justified in the post-mortem.
+4|>
+5|> **Scope:** This prompt defines the **loop architecture** — the diagram, role boundaries, the four-prompt composition, the spec/architecture authority hierarchy, entry/exit conditions, and the **mandatory post-mortem format**. It does **not** repeat the supervisor's day-to-day tactics (channel trust, `/ask` payload mechanics, COMPLETENESS checklist, verification grep patterns, post-mortem trigger conditions). Those live in [`implementationSupervisor.md`](./implementationSupervisor.md) and are referenced, not duplicated, here.
+6|>
+7|> **Genericity:** This prompt is written for the crabcakes project but is **agent-trio-agnostic**. The roles `{{SUPERVISOR_AGENT}}`, `{{BUILDER_AGENT}}`, and `{{AUDITOR_AGENT}}` are placeholders. For the canonical crabcakes instance, the supervisor is who ever has the role SUPERVISOR, the builder is who ever has the role CODER, and the auditor is who ever has the role DEBUGGER. To port this loop to another project, copy this file and substitute the prompt paths, the architecture document, and the spec convention.
+8|
+9|---
+10|
+11|## 1. Purpose
+12|
+13|Multi-agent implementation work is hard to supervise. The supervisor and the builder do not share context, do not run in the same session, and do not see the same things. A loop that works across many implementations has four properties:
+14|
+15|1. **ARCHITECTURE.md is the floor. The spec narrows it. The code conforms to both.** ARCHITECTURE.md is the authoritative source of truth for both structure and behavior. The spec is a feature-level document that specializes ARCHITECTURE.md for one feature — it may narrow, but never override. The code is the artifact that conforms to both. Anything in the code that contradicts ARCHITECTURE.md is a bug, period. Anything in the spec that contradicts ARCHITECTURE.md is a spec bug, not an architecture bug.
+16|2. **One phase at a time.** Multi-file changes fail more often than single-file changes. Sub-phase integration. Run independent verification between phases. A bug caught at phase N is a 5-minute fix; the same bug caught at phase N+3 is a half-day of cleanup.
+17|3. **Audit every code-bearing turn (mandatory adversarial).** The builder's "done" claim is not evidence. The supervisor delegates the adversarial audit to the **auditor agent** on **every code-bearing turn** (pre-flight, between-phase, post-fix). The auditor loads [`adversarialDebugger.md`](./adversarialDebugger.md) and works through its 11 sections. This is mandatory — pattern-based audits without loading the prompt will miss non-obvious bugs. If bugs are found, the builder fixes them; the supervisor re-routes to the auditor for re-audit. The loop is "auditor adversarial audit → bug → builder fix → auditor re-audit → next phase" until clean. See §3.1a for the full rule.
+18|4. **Post-mortem is the institutional memory.** The final deliverable is not just the code — it is the post-mortem. The post-mortem is the only artifact that survives across loops and across agent pairs. Use the mandatory format in §6 below. No post-mortem, no "done."
+19|
+20|---
+21|
+22|## 2. Loop Architecture
+23|
+24|```
+25|                 ┌────────────────────────────────────────────┐
+26|                 │   Captain / User (human or upstream agent)  │
+27|                 │   provides feature request or spec         │
+28|                 └──────────────────────┬─────────────────────┘
+29|                                        │
+30|                                        ▼
+31|                 ┌────────────────────────────────────────────┐
+32|                 │   {{SUPERVISOR_AGENT}} — implementation    │
+33|                 │   supervisor                  │
+34|                 │                                            │
+35|                 │  1. Read spec + ARCHITECTURE.md            │
+36|                 │  2. Phase the work (1-3 files per phase)   │
+37|                 │  3. Write phase-instructions file to disk  │
+38|                 │  4. Delegate build via /ask @{{BUILDER_AGENT}}
+39|                 │  5. Receive code from builder              │
+40|                 │  6. Delegate audit via /ask @{{AUDITOR_AGENT}} │
+41|                 │     (hand off the code-bearing turn to the │
+42|                 │      auditor for the 11-section probe)     │
+43|                 │  7. Auditor returns bug report?            │
+44|                 │     ├─ Yes → route bug report to builder   │
+45|                 │     │         (loop to step 5)              │
+46|                 │     └─ No  → independent verification      │
+47|                 │              (supervisor runs tests,       │
+48|                 │               reads diffs, greps — own eyes)│
+49|                 │  8. All phases done?                       │
+50|                 │     ├─ No  → next phase (loop to step 3)   │
+51|                 │     └─ Yes → post-mortem (mandatory        │
+52|                 │              §6 format) + commit + report  │
+53|                 └──┬───────────────┬───────────────┬─────────┘
+54|                    │ /ask (build)  │ /ask (audit)  ▲
+55|                    ▼               ▼               │ audit report
+56|                 ┌───────────────────────┐ ┌────────┴──────────────┐
+57|                 │  {{BUILDER_AGENT}}    │ │  {{AUDITOR_AGENT}}    │
+58|                 │  — code writer        │ │  — adversarial auditor│
+59|                 │                       │ │                       │
+60|                 │ - Reads phase-        │ │ - Loads               │
+61|                 │   instructions file   │ │   adversarialDebugger │
+62|                 │ - Writes code per     │ │   .md fresh each turn │
+63|                 │   steelFramedCodeWriter│ │ - Works through all   │
+64|                 │ - Reports back with   │ │   11 sections against │
+65|                 │   COMPLETENESS +      │ │   the code in scope   │
+66|                 │   verification        │ │ - Reports bugs in BUG │
+67|                 │   evidence            │ │   #[N] format to the  │
+68|                 │ - Fixes bugs routed   │ │   supervisor          │
+69|                 │   back by supervisor  │ │ - Does NOT fix code,  │
+70|                 │                       │ │   does NOT commit,    │
+71|                 │                       │ │   does NOT decide     │
+72|                 │                       │ │   phase completion    │
+73|                 └───────────────────────┘ └───────────────────────┘
+74|
+75|   External prompts referenced (NOT duplicated in this file):
+76|   ┌──────────────────────────────────────────────────────────┐
+77|   │  steelFramedCodeWriter.md  → builder invokes when       │
+78|   │                              writing code               │
+79|   │  adversarialDebugger.md    → auditor MUST load on every │
+80|   │                              code-bearing turn          │
+81|   │                              (see §3.1a — mandatory,    │
+82|   │                              not optional)              │
+83|   │  implementationSupervisor.md → supervisor's standing    │
+84|   │                              orders (tactics, not loop) │
+85|   │  steelFramedSpecWriter.md  → writing the spec that      │
+86|   │                              anchors the loop           │
+87|   └──────────────────────────────────────────────────────────┘
+88|```
+89|
+90|---
+91|
+92|## 3. Roles and Boundaries
+93|
+94|### 3.1 {{SUPERVISOR_AGENT}} (Implementation Supervisor)
+95|
+96|**Owns:**
+97|- Reading the spec and ARCHITECTURE.md before any delegation
+98|- Phasing the work into 1-3 file chunks
+99|- Writing phase-instructions files to disk before the first `/ask`
+100|- Sending the `/ask` to the builder
+101|- **Delegating the adversarial audit to the auditor agent on every code-bearing turn** — the supervisor does NOT perform the 11-section adversarial probe itself. The supervisor hands the code-bearing turn to the auditor (who loads [`adversarialDebugger.md`](./adversarialDebugger.md)), receives the auditor's bug report, and routes bugs back to the builder. See §3.1a.
+102|- Independent verification (running tests, reading diffs, greps) — **never trusting the builder's "done" claim**
+103|- Writing the post-mortem at the end (mandatory §6 format)
+104|- Committing and pushing the final work
+105|
+106|**Does NOT own:**
+107|- Writing code (delegates to the builder)
+108|- Performing the adversarial audit (delegates to the auditor)
+109|- Modifying the spec mid-loop (escalates to the captain if the spec is wrong)
+110|- Running the project manually (the loop is push-based — the builder reports, the supervisor routes audits and verifies, repeat)
+111|
+112|**Standing orders:** See [`implementationSupervisor.md`](./implementationSupervisor.md) for the complete tactical playbook (channel trust, `/ask` mechanics, COMPLETENESS enforcement, verification checklist, anti-patterns).
+113|
+114|### 3.1a Mandatory Adversarial Audit on Every Turn (Delegated to the Auditor)
+115|
+116|**The supervisor MUST delegate the adversarial audit to the auditor agent on every code-bearing turn.** This is not optional and not skippable. The supervisor who skips the audit handoff, or who audits "by pattern" without routing the code to the auditor, will miss non-obvious bugs (validated by the 2026-06-16 Auxilium Tier 2 audit, which found 2 MEDIUM bugs that pattern-based audits had missed across 5 phases).
+117|
+118|**The supervisor does not run the 11 sections itself.** The supervisor's job is to (a) identify the code-bearing turn, (b) hand the code in scope to the auditor via `/ask @{{AUDITOR_AGENT}}`, and (c) route the auditor's bug report back to the builder. The auditor owns the actual probing.
+119|
+120|**When "every turn" applies:**
+121|
+122|| Turn type | Audit handoff to auditor required? | Why |
+123||---|---|---|
+124|| Pre-flight (verifying spec claims before writing phase instructions) | **Yes** | Catches spec-vs-code drift before code is written |
+125|| Between-phase audit (after builder delivers, before next delegation) | **Yes** | This is the primary audit point |
+126|| Post-fix verification (after builder fixes a flagged bug) | **Yes** | Confirms the fix actually addresses the root cause |
+127|| Spec-writing turn (writing or revising a spec) | No | Specs are reviewed by the captain, not adversarially audited |
+128|| Post-mortem turn | No | Post-mortems summarize the audit, they don't replace it |
+129|| Pure-delegation turn (no code in scope) | No | Nothing to audit |
+130|
+131|**How the handoff works:** When a code-bearing turn arrives, the supervisor `/ask`s the auditor with: the phase scope, the files/lines in scope, and an instruction to load `prompts/adversarialDebugger.md` fresh and work through all 11 sections against the code in scope. The auditor reports findings back to the supervisor in the prompt's BUG format (BUG #[N] / Severity / Assumption violated / Attack vector / Reproduction / Root cause / Fix). The supervisor routes any bugs to the builder.
+132|
+133|**When bugs are found:** Either (a) route a bug-fix delegation to the builder before continuing the loop, or (b) escalate to the captain if the bug is out of scope. Do NOT silently incorporate fixes into a later phase — that violates the scope-creep rule and breaks the audit trail.
+134|
+135|**Tracking:** Count the number of adversarial audits performed per loop in the post-mortem §4 (Bugs Found During Audit). State explicitly which bugs were caught by the auditor's adversarial audit vs. by the supervisor's independent verification (tests/diffs/greps). This data feeds the standing-orders process for future loops.
+136|
+137|### 3.2 {{AUDITOR_AGENT}} (Adversarial Auditor)
+138|
+139|The auditor is a specialist role: it owns the adversarial probe, nothing else. It is the third leg of the trio and is invoked on every code-bearing turn by delegation from the supervisor.
+140|
+141|**Owns:**
+142|- Loading `prompts/adversarialDebugger.md` fresh at the start of each audit turn
+143|- Working through all 11 sections (challenge assumptions, trace failures, find hidden assumptions, test weakest links, exploit type system, break external contract, simulate weirdest user, verify scope coverage, audit docs, verify tests match) against the code in scope
+144|- Reporting bugs in the BUG #[N] format (Severity / Assumption violated / Attack vector / Reproduction / Root cause / Fix) to the supervisor
+145|- Reporting "no bugs found" explicitly when a probe comes back clean (silence is not acceptance)
+146|
+147|**Does NOT own:**
+148|- Fixing code (that's the builder's job)
+149|- Committing or pushing (that's the supervisor's job)
+150|- Deciding when a phase is complete (that's the supervisor's job)
+151|- Talking to the builder directly (all routing goes through the supervisor)
+152|- Escalating to the captain directly (it reports to the supervisor, who decides escalation)
+153|
+154|**Standing orders:** See [`adversarialDebugger.md`](./adversarialDebugger.md) for the complete auditor playbook (the 11 sections, the BUG format, the "prove the code is fragile" stance).
+155|
+156|The auditor's bug report is advice to the supervisor. The supervisor decides whether to route a fix, escalate, or (rarely) accept with documented justification. If the supervisor overrides an auditor finding, the override and the rationale are logged in the post-mortem §4.
+157|
+158|### 3.3 {{BUILDER_AGENT}} (Code Writer)
+159|
+160|**Owns:**
+161|- Reading the phase-instructions file in full before writing any code
+162|- Reading every file the phase touches in full before editing
+163|- Writing code per [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md) — applies every rule
+164|- Verifying every claim with evidence (test output, `wc -l`, `grep` output, `inspect.signature` results)
+165|- Reporting back with the COMPLETENESS checklist, files-changed list, and all verification command outputs
+166|- Fixing bugs routed back by the supervisor (the bugs originate from the auditor's adversarial probe; the builder never talks to the auditor directly — all routing goes through the supervisor). Does not silently expand scope — flags related issues.
+167|
+168|**Does NOT own:**
+169|- Phasing the work
+170|- Auditing their own code
+171|- Deciding when the implementation is done
+172|- Committing final work (the supervisor owns the commit/push)
+173|
+174|**Standing orders:** See [`steelFramedCodeWriter.md`](./steelFramedCodeWriter.md) for the complete builder playbook (read-before-touch, hard-part-first, verify-every-claim, wire-it-or-delete-it, no-fabricated-APIs, etc.).
+175|
+176|### 3.4 The Contracts Between Them
+177|
+178|There are two delegation contracts in the trio: **supervisor → builder** (the build delegation) and **supervisor → auditor** (the audit delegation). The builder and the auditor never communicate directly.
+179|
+180|**Supervisor → Builder (build delegation):** The supervisor's `/ask` payload is the **delegation contract**. The builder's response is the **delivery**. The contract has four required parts:
+181|
+182|1. **Phase scope** — exact files and line numbers (or exact identifiers, when line numbers may have drifted)
+183|2. **Rule reference** — `prompts/steelFramedCodeWriter.md` (the builder must invoke it)
+184|3. **Word marker** — a known phrase (e.g., "please write", "please proceed") so the channel knows the message is canonical
+185|4. **Deliverable expectations** — files-changed list, verification outputs, COMPLETENESS checklist, related issues (flagged, not silently fixed)
+186|
+187|A delivery that lacks any of the four is incomplete. The supervisor sends the delivery back. See `implementationSupervisor.
+[... truncated; line window cut after 16384 bytes; continue with line=187 ...]

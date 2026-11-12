@@ -1,0 +1,73 @@
+diff --git a/docs/P4-ARCH-AUDIT.md b/docs/P4-ARCH-AUDIT.md
+index e05547f..4a7d4d8 100644
+--- a/docs/P4-ARCH-AUDIT.md
++++ b/docs/P4-ARCH-AUDIT.md
+@@ -1,6 +1,6 @@
+ # P4 Architecture Audit — `docs/PHASE-4-PLATFORM-ARCHITECTURE.md`
+ 
+-**Verdict: FIX FIRST**
++**Verdict: FIX FIRST** — *(this section audits rev 1; verdict history: rev 1 FIX FIRST, rev 2 FIX FIRST — narrow, **rev 3 ACCEPT**. See "Final narrow re-audit — rev 3" at the end of this file, which is the operative verdict.)*
+ **Auditor:** Debugger (develcakes), 2026-11-10, at Supervisor's Phase 4 acceptance gate
+ **Artifact audited:** `docs/PHASE-4-PLATFORM-ARCHITECTURE.md` (34428 bytes, 271 lines, untracked, author Coder)
+ **Authority chain used:** `docs/PHOSPHOR-VISION.md` (wins on conflict) → `docs/PHOS-SPEC-001-trust-architecture.md` → `docs/PHOS-SPEC-002-system-integration.md` (base-OS choice superseded by SPEC-001 §14.4 / PM ruling 2026-11-10; L0–L4 + REC-1..5 staging model carries) → `docs/PHOSPHOR-BUILD-PLAN.md` §Phase 4 → `docs/PROJECT-STATUS.md` §2, §10, §14.
+@@ -382,3 +382,125 @@ Re-audit scope if a rev 3 appears: §6.5 lines 279-304, §8 line 405, §4 line 1
+ ---
+ 
+ *End of re-audit (rev 2). Verdict: **FIX FIRST** — 25/26 rev-1 findings resolved, 1 BLOCKER-class item introduced (NEW-1). No file other than this audit was modified.*
++
++---
++
++# Final narrow re-audit — rev 3 (`docs/PHASE-4-PLATFORM-ARCHITECTURE.md`, 80399 bytes, 555 lines, mtime 17:00)
++
++**Verdict: ACCEPT.**
++**Auditor:** Debugger, 2026-11-10. Scope: exactly the four locations and two appendix areas I fixed as the re-audit scope for rev 3 (§6.5:279-304, §8:405, §4:151, §4.1:170, the §10.2 row, and the §11 appendix) — nothing else re-examined, nothing else re-graded.
++
++## Method note — how the rev 2→3 delta was established
++
++`git diff` is **not** a valid rev 2→3 diff here: `HEAD` (`d44fa6e`, 16:59) captured the document **mid-edit**, at rev 2 plus Coder's first six rev-3 edits. Comparing the worktree to `HEAD` understates the delta and mixes it with the commit boundary.
++
++Instead I rec
+[... 8383 chars omitted ...]
+rection (Phase 5 pre-build, alongside the §10.2 items — not a closure gate):** state the enforcement as what it is — *the latch is one-way because keygate's read logic ignores `0` and because no unprivileged domain holds `set` on the property; SELinux checks the name, not the value, so a `set`-holder can also clear it by writing empty, which is why the host-set `ro.boot` path remains the only immutable trigger.* Two sentences, and it removes a claim a Phase 5 author would otherwise try to implement and fail to compile.
++
++## NEW-3 — RESOLVED, and compile-ready. One footnote.
++
++§8:415 now enumerates permission checks rather than "touching the agent's binary": `neverallow phosphor_keygate phosphor_agentd_exec:file *;` and `neverallow phosphor_keygate phosphor_agentd_data_file:file *;`. I verified this rule **form** is real in-tree, not invented: `neverallow { domain -odsign -init} odsign_data_file:file *;` (`system/sepolicy/private/odsign.te:66`), `… odrefresh_data_file:file *;` (`odrefresh.te:72`), `… stats_data_file:file *;` (`statsd.te:176`). `:file *` is the whole operation set by construction, so the rules cover `execute`, `execute_no_trans`, `entrypoint`, `open`/`read`, `map`, `write`, `create`, `unlink`, `setattr` — all of which I confirmed exist in the `common file`/`file` class definitions (`system/sepolicy/private/access_vectors`). It compiles.
++
++### NEW-7 — MINOR (non-gating) — the parenthetical operation list names a macro that does not exist in this tree
++
++§8:415 lists "`map`/`mmap_exec_file_perms`" among the operations. `mmap_exec_file_perms` is **not defined** anywhere in this tree's sepolicy macros — the sets are `x_file_perms`, `r_file_perms`, `w_file_perms`, `rw_file_perms`, `rx_file_perms`, `rwx_file_perms`, `create_file_perms` (`system/sepolicy/public/global_macros:25-35`); there is no `mmap_exec_file_perms`. Harmless as written, because `:file *` subsumes it and nobody needs to expand the macro — but if a Phase 5 author copies that name into a rule, it fails to compile, which is the exact failure NEW-3 was raised to prevent. Replace with `map` (and, if exec-map is meant, `execmod`) when the sentence is next touched.
++
++## NEW-4 — RESOLVED, and compile-ready.
++
++§8:414 names the artifact and its type: a JSON document (`risk-policy.json`) stored as `phosphor_risk_policy_file`, with `neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } phosphor_risk_policy_file:file { write append create rename setattr unlink };`. Every permission in that list is a valid `file`-class permission (confirmed against `common file` in `system/sepolicy/private/access_vectors`), and the list-and-braces form has precedent (`neverallow pcc_component shell_data_file:file { write create setattr relabelfrom append unlink link rename };`, `system/sepolicy/private/pcc_component.te:331`). The rule is against a **named type**, not "any Phosphor domain", and it preserves §6.3:218's deliberate read grant to agentd and broker — the over-broad reading NEW-4 flagged is gone. The surviving phrase "rather than a vague 'any Phosphor domain'" is the row explaining what it replaced, not a live claim.
++
++## NEW-5 — RESOLVED.
++
++§4.1:172 is exactly the missing scope statement, and it resolves the conflict in the direction that keeps Layer 2 exact rather than weakening it: the `data:`-only allow-list "applies to the agent WebView only", "**no shell-side view ever loads remote content into that WebView** — there is no in-WebView link preview, no remote thumbnail, no embedded document", remote display "performs an explicit **hand-off to the Vanadium browser**", and any future in-WebView remote fetch "is added here as a named, reviewed exception — not by relaxing the allow-list." That is consistent with §4.1:182's renderer-isolation note and leaves the `shouldInterceptRequest` rule, the injected CSP, and the Phase 5 H1 acceptance test (both blocked + inline still executes) untouched. No regression to P4-AUDIT H1's closure.
++
++## What ACCEPT means for the Phase 4 exit criterion
++
++Stated plainly, because the §10.2 table changes what "accept" is worth.
++
++BUILD-PLAN Phase 4's exit criterion (line 261) is: *"The major system boundaries and implementation locations are understood well enough to begin native platform work without guessing."*
++
++**This ACCEPT is an ACCEPT of the document against that criterion, on the declared-debt boundary.** It means: the boundaries, implementation locations and trust assignments are specified well enough that Phase 5 does not have to *guess* — and, critically, that where the document does not know, it says so instead of asserting. §10.2 is now the operative artifact for that judgement: **9 declared rows**, of which 7 carry `[TO VERIFY IN TREE]`, each with an owner and a named Phase 5 step that it blocks. A criterion about "without guessing" is satisfied by a document whose residual unknowns are enumerated and gated; it is *not* satisfied by one whose unknowns are hidden, which is what rev 1 was. That shift — from hidden assumption to declared debt — is the substantive reason for ACCEPT, more than the count of resolved findings.
++
++**It does not mean Phase 4 closes unconditionally, and this audit does not close it.** Three consequences, all already stated by the document itself (§10:511) and none of them softened here:
++
++1. **Four Captain decisions still gate Phase 5 manifest/sepolicy work:** OQ-1 (engine trust acceptance), OQ-2 (credential anchor), OQ-3 (approval-card host), OQ-4 (broker hosting shape). The document correctly refuses to claim unconditional closure, and I am not supplying that claim for it.
++2. **Two §10.2 rows gate implementation steps rather than the phase:** app-layer visibility of `sys.phosphor.safeboot` gates §6.5's implementation, and the `[TO VERIFY IN TREE]` protection levels gate the §3 manifest. Landing Phase 5 against §3 before the second is discharged would repeat rev 1's privilege-level errors in a built artifact.
++3. **NEW-6 and NEW-7 are carried forward as non-gating wording debt**, with the same status as NEW-3/4/5 had in the rev-2 re-audit: they can land at Phase 5 pre-build alongside the `[TO VERIFY IN TREE]` items. If the Supervisor prefers zero carried debt, the cheapest path is to let Coder take them with the §6.5 property-visibility work — but nothing in the architecture rests on them, so they do not withhold acceptance.
++
++The previously circular deferral of the capability inventory and the diagrams remains resolved (both delivered in §3 and §10.1), so the two rev-1 deliverable gaps stay closed.
++
++## Process integrity (rev 3)
++
++`git status --short` shows exactly one modified path: `docs/PHASE-4-PLATFORM-ARCHITECTURE.md`. `find -newermt "2026-11-10 17:00"` (excluding `.crabcakes/`) returns exactly that file. **No source, script, build or device artifact was touched by rev 3**, and the document's closing line — "Design only — no code, builds, or device operations were performed. No file other than this document was created or modified" — is accurate for this revision as well. My own scratch work for this re-audit is one reconstruction script at `.crabcakes/tmp/agent-debugger/replay_rev2.py` (writes only to `/tmp`), which is tooling, not a repo artifact, and I did not modify the audited document.
++
++One process note worth recording for the trail: commit `d44fa6e` (16:59) committed the architecture document **mid-edit**, so the committed blob is neither rev 2 nor rev 3 — it is rev 2 plus six rev-3 edits. Anyone later diffing `HEAD` against rev 3 will read a misleadingly small delta and may conclude rev 3 was cosmetic. The authoritative rev 2 baseline is the reconstruction above, not `HEAD`.
++
++---
++
++*End of final re-audit (rev 3). Verdict: **ACCEPT** — NEW-1 resolved on both halves with the fail-closed polarity now matching agentd's start condition; the §4 `R-SEC-3` row, NEW-2's latch polarity, NEW-3, NEW-4 and NEW-5 all resolved and compile-ready; two non-gating wording items carried forward (NEW-6, NEW-7). Phase 4 remains conditionally closed on OQ-1..OQ-4, per §10:511. The audited document was not modified by this re-audit; no file other than this audit was modified.*

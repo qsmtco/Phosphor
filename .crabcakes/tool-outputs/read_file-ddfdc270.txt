@@ -1,0 +1,91 @@
+[line 115 of docs/specs/P5-S8-diagnostics-exit.md]
+115|| E10 | Diagnostics reproducible by a second person | S8 §2.3, run twice, by a different operator if available | PASS |
+116|| E11 | **§4.1 H1 re-run** (architecture-named) | S5 A5 | PASS, or DEFERRED with reason — **not omitted** |
+117|| E12 | **§3 hard-restricted grant landing** (architecture-named) | Phase 9 (SMS/contacts not implemented in Phase 5) | **DEFERRED with reason** — the capability does not exist yet, so the grant cannot be exercised; the deliverable (allowlist entry) is Phase 9's. Recording this is mandatory; claiming it is not. |
+118|| E13 | **R-PERF microbench** (architecture-named) | Phase 8 (classifier) / Phase 13 (final) | **DEFERRED with reason** — no classifier in Phase 5, so there is nothing to benchmark; the ≤5 ms/≤1 ms/±10% targets are unchanged and unattributed to Phase 5. |
+119|| E14 | Drift check: the built tree matches the documented architecture | S8 | PASS — any place where implementation and §2.1/§6.5/§8 disagree is listed, with which one wins and why |
+120|
+121|**E14 is the spec's real value.** Phase 5 is the first phase where design meets a build; the exit note must list every divergence found (property naming, init event choice, AID spelling, frame limits, card host mechanics) so Phase 6 inherits facts, not assumptions.
+122|
+123|### 2.6 Evidence discipline
+124|
+125|- Every claim in the exit note carries a command and its output (or a screenshot's filename). `docs/PROJECT-STATUS.md` §8: "do not trust 'it boots'" — the same discipline applies to every row here.
+126|- Failures are **reported, not retried into passing**. A row that cannot be met is a finding with an owner, and the phase's status is "complete except <row>", never a silent pass.
+127|- No row is satisfied by an assertion about code; each needs an observed signal.
+128|
+129|---
+130|
+131|## 3. Implementation location
+132|
+133|| Artifact | Path |
+134||---|---|
+135|| ctl binary | `<tree>/packages/phosphor/services/PhosphorDiagnostics/main.cpp` (module from S1) |
+136|| Health-check logic | `…/checks.cpp` (+ `checks.h`), one function per H-row |
+137|| Broker dump | `<tree>/packages/phosphor/apps/PhosphorBroker/…/PhosphorBrokerService.java` `dump()` (S6 hosts it) |
+138|| Drill procedure | `<tree>/docs/specs/P5-S8-drill-runbook.md` — **created only if the PM wants the runbook separated from the spec**; otherwise §2.4 of this file *is* the runbook |
+139|| Exit note | `docs/PHASE-5-EXIT.md` (new, at drill completion — not part of this spec's authoring) |
+140|| Evidence | `docs/evidence/phase5-*/` (screenshots, `phosphor-ctl` outputs, logcat captures) |
+141|
+142|---
+143|
+144|## 4. Acceptance criteria
+145|
+146|**A1 — `phosphor-ctl` exists, is read-only, and every subcommand works on a normal boot.** All six subcommands run without error; `health` exits 0 with H1–H8 pass; no command writes anything (verify by `strace`-free means: no file opened for write in the source, and `git status` on the device root unchanged across runs is not observable — so the static check stands and is stated as static).
+147|
+148|**A2 — Health check is honest in both directions.** On the normal boot, `health` = 0. On the safe-boot drill boot (D5), `health` prints the **safe-boot signature** and does **not** report a false failure; the two modes are distinguishable in one command.
+149|
+150|**A3 — Diagnosis path documented and reproduced.** The completion note's dumpsys/ctl command set is run **twice**, and the second run (ideally by a different operator) reaches the same conclusions without asking the author. If no second operator is available, that is recorded as a limitation.
+151|
+152|**A4 — No secrets, no privilege.** Static: `rg -n 'READ_|ACCESS_|CAMERA|RECORD|keystore|credentials' packages/phosphor/services/PhosphorDiagnostics` → no permission declaration, no secret path; `Android.bp` declares no `uses-permission` (it is a binary, so this is structural) and the `.rc`-free binary needs no domain beyond S2's (record which domain `phosphor-ctl` runs in — **new requirement surfaced here**: S2 declared four domains; `phosphor-ctl` is a fifth process. It runs as a `shell`-invoked binary, so it needs either (a) `su`-free execution from `adb shell` with its own domain, or (b) no special domain and does its reads via `adb shell` commands. **Resolve here and feed back to S2** — if a fifth domain is needed, S2 gains one domain and the four-domain claim in S2 A8 must be corrected before S8 signs off.)
+153|
+154|**A5 — The drill produces its evidence.** After PM approval and execution: D5 shows `decision=safe`, stock launcher screenshot, agentd/broker absent; D8 shows full restoration (`health` = 0, shell is HOME). The completion note references the approvals explicitly. **If PM approval for a step is withheld, the row is recorded as not-executed with that reason — the spec does not fail for a withheld approval, but the phase's exit is marked incomplete and the PM is told plainly.**
+155|
+156|**A6 — Exit checklist complete, with honest deferrals.** E1–E14 each carry a verdict + evidence. E12/E13 are DEFERRED **with the stated reasons**; E11 PASS-or-explicitly-deferred. No row blank.
+157|
+158|**A7 — Drift report exists (E14).** A list of every implementation-vs-architecture divergence found across S1–S7, each with: the divergence, which document is authoritative, and the follow-up owner. Examples expected: init event choice, AID spelling, frame limit, card launch mechanism, `phosphor-ctl`'s domain.
+159|
+160|**A8 — Reliability is quantified, not asserted.** E5's "starts reliably" evidenced by ≥5 consecutive normal boots with agentd `running` and no `crashloop` marker, plus 3/3 kill-restarts. Each boot's evidence captured.
+161|
+162|**A9 — No device operation performed without recorded approval.** The session record shows an approval preceding each ⚠ step. An unapproved device operation fails the spec outright, regardless of outcome.
+163|
+164|---
+165|
+166|## 5. Edge cases
+167|
+168|| Case | Required behaviour |
+169||---|---|
+170|| `health` run in safe boot | Prints the safe-boot signature, exit 0 for *correct safe boot*. Do not make "healthy" mean "agentd running" — that would diagnose a working escape as a fault. |
+171|| `health` run when the policy artifact is missing | `policy=invalid`, exit ≥1, and the message says the agent **should have refused to start** (S4 §2.4) — a running agentd with an invalid policy is a defect to report, not a state to tolerate. |
+172|| `phosphor-ctl` cannot read `sys.phosphor.safeboot` | Prints `unknown`; does not infer `0`. (An inferred `0` would defeat fail-closed diagnosis.) |
+173|| Operator runs the drill on an unsigned/dev image | Allowed for the *drill*, but the exit note must state the provenance; the exit criterion's "custom Phosphor build" means ours, and a `:user/test-keys` dev image is recorded as such (PROJECT-STATUS §8: fingerprint ending `:release-keys` is the release signal). |
+174|| A reboot leaves no adb | Recovery ladder; drill halts; PM informed. Do not attempt repeated reboots to "see if it comes back". |
+175|| The latch clear form is undocumented (S3 open item 3) | The drill **cannot proceed to D7**; S3's open item is pulled forward and closed first. A drill without a documented clear path is a trap, not a procedure. |
+176|| avc denials appear on the normal boot | H8 fails ⇒ the phase's exit is incomplete until the denial is explained or fixed. Denials on the *drilled* boot that are expected (keygate writing its property) must be enumerated, not hand-waved. |
+177|| Second operator unavailable | Recorded limitation (A3); the runbook's independence is claimed no higher than evident. |
+178|| PM withholds drill approval | Exit marked incomplete with the reason; **no row is marked PASS by inference**. |
+179|| Someone wants to add a network health check | Refused: diagnostics are on-device and read-only; no telemetry, no upload (§1 non-goals). |
+180|| `phosphor-ctl` needs a fifth domain (A4) | Feed back to S2 **before** S8 signs off; the four-domain claim must be corrected in S2 and re-audited. Do not quietly add a domain in S8. |
+181|
+182|---
+183|
+184|## 6. Definition of done / auditor checklist
+185|
+186|- [ ] A1–A9 pass, each with attached evidence.
+187|- [ ] `phosphor-ctl`: six subcommands, read-only, zero permissions, secret-free.
+188|- [ ] Health check passes on normal boot, correctly identifies safe boot as *correct* (not faulty).
+189|- [ ] dumpsys-based diagnosis path documented with exact commands and reproduced once independently.
+190|- [ ] Drill: procedure complete, **every ⚠ step gated on PM approval**, reversibility proven (D7/D8), stop rules stated.
+191|- [ ] Exit checklist E1–E14 with verdicts; deferrals stated with reasons; no blanks.
+192|- [ ] Drift report (E14) filed, with the `phosphor-ctl` fifth-domain question resolved or escalated.
+193|- [ ] "Starts reliably" quantified (5/5 boots, 3/3 restarts).
+194|- [ ] Provenance of the tested image recorded; `:user/test-keys` distinguished from release.
+195|- [ ] No unapproved device operation anywhere in the record.
+196|
+197|## 7. Open items created by this spec
+198|
+199|1. `phosphor-ctl`'s domain: does it need a fifth Phosphor domain, or does it run from `adb shell` unprivileged? **Must be resolved and fed back to S2 (§5 row, A4).**
+200|2. `dumpsys phosphor` (framework registration) vs. the dumpsys-fallback path — which is delivered (§2.2).
+201|3. Whether the drill runbook is separated into its own file (§3).
+202|4. E12 (hard-restricted grant landing) and E13 (R-PERF microbench) are **named Phase 9 / Phase 8+13 debts**, carried forward explicitly by this spec so they cannot be mistaken for discharged.
+203|5. The latch clear form (pulled forward from S3 open item 3) must be closed before the drill can run D7.
+204|6. `docs/PHASE-5-EXIT.md` is created at drill completion, not now — this spec defines its required content.

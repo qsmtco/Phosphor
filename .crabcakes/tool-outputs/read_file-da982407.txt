@@ -1,0 +1,42 @@
+[line 274 of docs/PHASE-4-PLATFORM-ARCHITECTURE.md]
+274|### 6.5 Recovery — safe boot (BLOCKER-1, redesigned)
+275|
+276|**`[ADAPTED FROM SPEC-002 REC-2: safe-mode boot path — a boot that starts a plain surface and skips the agent, reachable without the agent's cooperation.]`**
+277|
+278|Rev 1 answered this with Android's PackageManager safe mode. **That mechanism provably cannot satisfy REC-2**, on two independent grounds:
+279|1. Android safe mode is a `PackageManagerService` concept — it gates **APK components**. `phosphor_agentd` is an init-started native binary with no package, so safe mode never sees it and cannot stop it (the very thing REC-2 asks to skip).
+280|2. Safe mode disables only **non-system** apps (`ComputerEngine.java:3684`: `if (safeMode && !ps.isSystem()) … NOT_SYSTEM`; `PackageSetting.java:845`). `PhosphorShell` is mandated to be a platform-signed system app (`FLAG_SYSTEM`), so it stays startable **and stays the resolved HOME** — the claimed "boot into stock launcher" does not occur.
+281|
+282|**The redesigned mechanism — a boot-time, property-gated safe boot in Phosphor's own code, with no dependence on a healthy device:**
+283|
+284|- **Trigger sources.** (a) `androidboot.phosphor.safeboot=1` on the kernel command line, which init exposes as the read-only property `ro.boot.phosphor.safeboot` — set **host-side, out-of-band, by the same USB workflow that already gates every device operation** (PROJECT-STATUS §8; vision: no flash/wipe without explicit approval for that operation). `ro.boot.*` is immutable at runtime, so **the agent cannot clear it and cannot prevent it** — that is the "without the agent's cooperation" property. (b) A hardware-key chord evaluated on-device. Both sources are read by one small, purpose-built early service and collapsed into a single decision, so the boot logic never depends on property arithmetic or on any surface being up.
+285|- **`phosphor-keygate` — the single decision point, evaluated before anything else of ours runs.** A tiny `class core`, `oneshot` init service with no capability permissions: it reads (i) `ro.boot.phosphor.safeboot` and (ii) the hardware key chord, and additionally honours (iii) `persist.phosphor.safeboot` **as a set-only latch — it can request safe boot, never cancel it** (transitions `absent→1` only; a `persist` value of `0` is ignored). **How that one-way property is actually enforced (NEW-6 — corrected):** not by a `neverallow` "on the reverse direction". A `neverallow` against `property_service set` has no value dimension at all — the permission check is on the property *label* only (`property_service.cpp:162-174`), and the value comparison in `CheckType` returns `true` for any empty value (`property_type.cpp:31-35`), so no policy rule can distinguish setting `=1` from setting `=0`. The one-way property therefore rests on three expressible facts, and is stated in those terms: **(a)** `phosphor_agentd` (and every other Phosphor domain) holds **no `set` permission at all** on the latch's type, so nothing inside the running system can write it in either direction; **(b)** the immutable host-set `ro.boot.phosphor.safeboot` carries REC-2 independently of the latch, so the latch is a convenience, not the load-bearing trigger; **(c)** for the one documented writer — the host, over adb, out-of-band — clearing is **exactly as reachable as setting**, deliberately symmetric, because the host+cable operator is already the trusted recovery authority (§6.5 residual gap, REC-1). This keeps the mechanism strictly one-way for everything on the device: the property can withhold the agent, and no on-device Phosphor process can clear a safe boot the host asked for. It then either sets `sys.phosphor.safeboot=0` and starts the agent, or sets `sys.phosphor.safeboot=1` and starts nothing. **Fail-closed default: if keygate does not run or cannot decide, safe boot is the assumption and the agent stays down.**
+286|  ```
+287|  service phosphor_keygate /system/bin/phosphor-keygate
+288|      class core
+289|      user phosphor_keygate
+290|      group phosphor_keygate
+291|      oneshot
+292|  on late-init
+293|      start phosphor_keygate
+294|
+295|  service phosphor_agentd /system/bin/phosphor-agentd
+296|      class core
+297|      disabled
+298|      user phosphor_agentd
+299|      group phosphor_agentd
+300|  on property:sys.phosphor.safeboot=0
+301|      start phosphor_agentd
+302|  ```
+303|  (`on property:` triggers match one property; that is exactly why the decision is collapsed into `sys.phosphor.safeboot` by keygate instead of being expressed as a compound condition inside init. Exact init syntax is a Phase 5 implementation detail — the *architecture* is: one early decision, fail-closed, agent gated on its result.)
+304|- **Agent and broker skipped.** `phosphor_agentd` never starts (above). `PhosphorBroker` likewise does not auto-start; because every gated capability routes through it, safe boot is **fail-closed for capabilities** — a plain phone, not a compromised one.
+305|- **Plain surface — same polarity as the agent, i.e. fail-closed.** `PhosphorShell`'s HOME activity reads `sys.phosphor.safeboot` in `onCreate` and hands off to the **stock launcher by explicit component** and finishes itself **unless the property definitively reads `0`**. It is *not* "hand off when set": an absent property, a value the app layer cannot see, or any unparseable value **all** mean hand-off. This mirrors agentd's own start condition exactly (`on property:…=0`, so absent ⇒ never start), which is the point — the two halves of one mechanism must not be written with opposite polarity, or a property the app layer cannot read silently produces launcher-less Phosphor UI with no agent, the *opposite* of REC-2's plain surface. The HOME role is not *reassigned* (which PackageManager safe mode cannot do); the shell **declines to be the surface**. Result: launcher + Settings + no agent — REC-2's "plain shell + minimal network". **App-layer visibility of `sys.phosphor.safeboot` is settled (rev 4, §10.2):** `sys.*` defaults to `system_prop` (`property_contexts:23`), `system_prop` is a `system_public_prop` (`public/property.te:262`), but an *app* read is not implied by either — it needs an explicit `get_prop` rule, of which the tree already ships the precedent `get_prop(appdomain, boot_status_prop)` (`private/app.te:40`). Phase 5 therefore adds `get_prop(appdomain, phosphor_safeboot_prop)` to the sepolicy, and the mirror-property fallback stays as the escape hatch if that grant proves insufficient on-device.
+306|- **Why this works where PackageManager safe mode does not:** the decision point is a boot property consumed by our own `.rc`, not a PackageManager flag; the surface change is our own activity declining, not a system-app disable; and the decision is taken before our UI exists, so no amount of agent health — or agent misbehaviour — can affect it.
+307|- **Residual gap (recorded honestly, as REC-1's line does).** The hardware-key chord lives in `phosphor-keygate`, which is a Phase 5 deliverable; until it ships, on-device safe boot is reached via the host (the `ro.boot` path, or setting the set-only `persist` latch over adb while the device is otherwise healthy), i.e. host + cable — the same residual shape as REC-1's backup gap. The host-set `ro.boot` path is available on day one of Phase 5 and satisfies REC-2's "reachable without the agent's cooperation" from the first bootable Phosphor image.
+308|
+309|**`[ADAPTED FROM SPEC-002 REC-1]`** — out-of-band recovery remains the **fastboot ladder** (PROJECT-STATUS §"Recovery ladder"), proven in Phase 3, with its recorded gap: `flash-all.sh` wipes userdata, so recovery restores the *device*, not the *data*; the backup gap is scheduled for Phase 11.
+310|
+311|### 6.6 Residual SPEC-002 L1 (OQ-8)
+312|
+313|SPEC-002 wanted agent-authored kernel-adjacent policy (eBPF). On Android this maps to nothing safe: SELinux policy is compile-time, and agent-authored eBPF on an Android kernel is a non-starter. Recommended: **declare L1 satisfied-by-platform** (Android/SELinux *is* the kernel-policy layer Phosphor rides). Needs the Captain's sign-off because it retires an entire SPEC-002 level.
+[... truncated; continue with line=314 ...]
