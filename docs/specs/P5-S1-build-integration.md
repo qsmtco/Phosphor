@@ -1,7 +1,7 @@
 # P5-S1 — Build integration: Phosphor repositories and modules in the `akita` build
 
 **Phase:** 5 · **Spec ID:** P5-S1 · **Rev:** 3 (errata 2026-11-10 PM-approved: priv-app install paths, B6 host path, A5 baseline wording; erratum 4 2026-11-12 PM-approved: B6 dev-variant fetch/name split) · **Owner:** Coder (builder) / Debugger (auditor)
-**Status:** EXECUTED **Status:** DRAFT — awaiting PM approval. This spec authorizes CLOSED 2026-11-12 (all phases 1a/1b/1c audit-ACCEPT; evidence in docs/handoffs/, post-mortem in docs/post-mortems/). Historically: this spec authorized **no code, no build, no device operation** by itself; the builder executes it after approval.
+**Status:** EXECUTED & CLOSED 2026-11-12 (all phases 1a/1b/1c audit-ACCEPT; evidence in `docs/handoffs/`, post-mortem in `docs/post-mortems/`). This spec authorized **no code, no build, no device operation** by itself; the builder executed it after approval.
 **Depends on:** nothing. Phase 4 architecture `docs/PHASE-4-PLATFORM-ARCHITECTURE.md` rev 4 is **CLOSED**; the Phase 2/3 platform pipeline is proven (`docs/PROJECT-STATUS.md` §6).
 **Blocks:** **all of P5-S2 … P5-S8.** No other Phase 5 spec can be built before S1 lands, because every later spec adds code to a module that S1 creates.
 **Authority:** BUILD-PLAN Phase 5 scope item 1 ("Add the initial Phosphor platform repositories/modules to the build"); architecture §2.1 (process inventory), §8 ("sepolicy lives in our build tree's device/platform overlay"); `docs/PROJECT-STATUS.md` §6 (the verified build recipe), §9 (build traps).
