@@ -69,6 +69,16 @@ phosphor_agentd phosphor_keygate
 ```
 `e477f4b` fixed exactly those. Every earlier "fix" that survived (backslashes, placement, forms) is a real compiler-driven improvement with its own diagnostic; the *reasoning* attached to `f5ddca6` was wrong and is corrected in-tree.
 
+## Option (b) fix round (2026-11-13, post-audit, PM-approved)
+
+**Audit verdict was NOT ACCEPT (BUG #1 CRITICAL / #2/#3 HIGH, both independently reproduced by the Supervisor).** PM chose option (b): make the rules strict-clean; enforcement-regime decision deferred to S8.
+
+- Payload `225c3a9`: blanket `dev_type` rules (inert — 12 plat-baseline violations, allow wins at runtime) replaced by §8's named types `radio_device`/`camera_device`/`audio_device` chr+blk (plat-public, `public/device.te:5,11,20`). Shell inbound-binder neverallow (83 violations = generic app-domain binder baseline; rule was written against S5's future rules) **deferred to S5**, obligation recorded in-tree + here. Rule count restored to the plan's 15.
+- **Decisive gate, executed:** binary-mode `checkpolicy -M -c 30` on the fresh build conf (mtime 23:10): `CP_EXIT=0`, **zero neverallow violations of any kind** — strict-clean, not merely phosphor-clean. Hand-run `sepolicy_tests`: exit 0, 142 noise, 0 other. Full build targets green.
+- **Erratum ⑫:** the plan's 15th neverallow (`netlink_generic_socket`) was silently dropped at build (type not public-visible) — now recorded as a deviation, not silent.
+- BUG #1 (checker disabled on akita via `BoardConfig.mk:100` `SELINUX_IGNORE_NEVERALLOWS := true`) is **open for S8** with PM disposition: enforce on Phosphor builds or re-scope the "enforced by neverallow" language.
+- Focused re-audit of this fix round requested from Debugger (scope: neverallows.te, binary-mode validation, deferral honesty).
+
 ## Open items
 
 - **A2:** the latch writer's negative-liveness differential is PASS (above); the keygate rule got only compile-level proof, no removal cycle — offered to the auditor as the one remaining §5 wording gap.
