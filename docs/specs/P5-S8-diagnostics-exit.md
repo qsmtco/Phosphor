@@ -107,7 +107,7 @@ BUILD-PLAN Phase 5's exit criterion: *"The Pixel boots a custom Phosphor build i
 |---|---|---|---|
 | E1 | The image builds from an unchanged recipe | S1 A2 | PASS + step count |
 | E2 | All five modules are in the image | S1 A3 | PASS |
-| E3 | sepolicy compiles, neverallows intact | S2 A1–A5 | PASS |
+| E3 | sepolicy compiles; Phosphor neverallows **declared and strict-validated by binary-mode `checkpolicy -M -c 30` on the shipped conf** (the akita build checker is disabled — `BoardConfig.mk:100` `SELINUX_IGNORE_NEVERALLOWS := true`, S2 post-exec audit BUG #1); **S8 owns the enforcement-regime disposition: enforce strict checking on Phosphor builds (override the vendor flag and make `sepolicy_neverallows` a hard gate) or formally re-scope the "enforced by neverallow" language across the spec set — PM decision** | S2 A1–A5 + S2 fix-round evidence (`docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md`, option-b round) | PASS (as re-scoped by the PM disposition) |
 | E4 | Boot decision taken, fail-closed both ways | S3 A1/A2/A4 | PASS |
 | E5 | Agent foundation **starts reliably** — the literal exit criterion | S4 A1/A4 (+ ≥5 consecutive normal boots, zero crash-loops) | PASS. **"Reliably" is quantified here as 5/5 boots and 3/3 kill-restarts**; the completion note says so, so the word is not left to opinion. |
 | E6 | Shell is the surface on normal boot | S5 A1 | PASS |
