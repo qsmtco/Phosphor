@@ -1,6 +1,6 @@
 # P5-S3 — `phosphor_keygate`: the boot-decision service
 
-**Phase:** 5 · **Spec ID:** P5-S3 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+**Phase:** 5 · **Spec ID:** P5-S3 · **Rev:** 2 (errata ⑬–⑯ 2026-11-14 PM-approved: rc user/group partition-prefixed; trigger → load_persist_props_action; compound-trigger ban re-reasoned; T1 readability closed — bootloader_prop prefix row, zero sepolicy) · **Owner:** Coder (builder) / Debugger (auditor)
 **Status:** DRAFT — awaiting PM approval.
 **Depends on:** **P5-S1** (module `phosphor-keygate`, `packages/phosphor/init/`, `/system/bin/phosphor-keygate`) and **P5-S2** (`phosphor_keygate` domain, `phosphor_keygate_exec`, `phosphor_safeboot_prop`, `phosphor_safeboot_latch_prop`, the subtraction-form property `neverallow`). Neither is optional: without S2 the service cannot write its one property, and without the latch type the adb trigger is unachievable (audit R-2).
 **Blocks:** **P5-S4** (agentd's start condition *is* this service's output), and therefore S5–S7's normal-boot path. Also the *normal* half of S8's acceptance.
@@ -94,20 +94,24 @@ The completion note and the source comment must both say the true thing, not the
 ```
 service phosphor_keygate /system/bin/phosphor-keygate
     class core
-    user phosphor_keygate
-    group phosphor_keygate
+    user system_ext_phosphor_keygate
+    group system_ext_phosphor_keygate
     oneshot
 
-on late-init
+on load_persist_props_action
     start phosphor_keygate
 ```
+
+**Erratum ⑬ (PM-approved 2026-11-14):** `user`/`group` must be the partition-prefixed AID name (`system_ext_phosphor_keygate`, uid 7520). The unprefixed form cannot resolve: bionic exact-matches full names (`grp_pwd_file.cpp:301-313`) and the generated passwd row is `system_ext_phosphor_keygate::7520` (config.fs partition prefix is mandatory). Real precedent: `device/google/sdv/sdv_core_base/sdv.agents.rc:25` (`user system_ext_sdv_sbr`); the `:124` unprefixed form resolves via a hardcoded header AID, which we do not have. `host_init_verifier` (definitions.mk:3137-3168) fails the build on an unresolvable name.
+
+**Erratum ⑭ (PM-approved 2026-11-14):** the trigger is `on load_persist_props_action`, **not** `on late-init`. Statically resolved by the S3 preflight: `late-init` forks keygate *before* `load_persist_props` (init.rc:731, cascade :517-545) — T2 would read empty ⇒ absent ⇒ decision table maps absent→1 ⇒ **every normal boot becomes safe boot** and A2 is unsatisfiable. `load_persist_props_action` (init.rc:739) exists for exactly this case and fires after persist properties load. All `.rc` files are parsed before any action executes (init.cpp:347-369), so the agentd-trigger registration ordering concern below remains satisfied — stronger than the original premise (the `queue_property_triggers` sweep at init.cpp:1286 re-checks property actions after parse).
 
 `[VERIFY AT BUILD: exact init syntax — architecture §6.5 explicitly defers "exact init syntax" to Phase 5. If `on late-init` proves too early to read `persist.*` or too late to beat the agentd trigger, record the actual trigger used (`on early-init`/`on init`/`on property:sys.boot_completed=1`) and justify it; the architecture's constraint is "one early decision, fail-closed, agent gated on its result", not the literal event name.]`
 
 **Ordering hazard — check it explicitly, do not assume it.** init evaluates `on property:` triggers when the property is **set**. If keygate writes `sys.phosphor.safeboot=0` before agentd's `.rc` (and therefore the `on property:sys.phosphor.safeboot=0` block) has been parsed, the trigger never fires and agentd never starts on a **normal** boot — a fail-closed-looking system that is simply dead.
 
 - **Primary resolution:** keygate runs `on late-init`, by which point all `.rc` files are loaded, so its write lands after the trigger is registered. Verify this on device (A9).
-- **Forbidden resolutions:** (a) a second-condition trigger such as `on late-init && property:…` — this tree's init matches one property per `on property:` block (§6.5: "`on property:` triggers match one property"); (b) any design where agentd **re-derives** the decision at startup (re-evaluating `ro.boot`/the latch/chord) — that is a **second decision point**, which §6.5 forbids and which would restore the very split-brain NEW-1 closed. Note the distinction from S4 §2.2: agentd's own start-condition check is **refuse-only** — it may *withhold* itself when the property is not `0`, and it can never *grant* itself anything, so it adds a fail-closed guard rather than a second decision; (c) an unconditional `start phosphor_agentd` anywhere.
+- **Forbidden resolutions:** (a) a second-condition trigger such as `on <event> && property:…` — compound *parse* is legal (action_parser.cpp:97-133 handles maps of property triggers; in-tree `on boot && property:ro.debuggable=1` at init.rc:1235), **but the runtime property-change dispatcher ignores actions that carry an event trigger** (action.cpp:225-228), so the combination never fires on a property change — the ban stands on runtime grounds, not the parse-level claim made in earlier revisions (erratum ⑮); (b) any design where agentd **re-derives** the decision at startup (re-evaluating `ro.boot`/the latch/chord) — that is a **second decision point**, which §6.5 forbids and which would restore the very split-brain NEW-1 closed. Note the distinction from S4 §2.2: agentd's own start-condition check is **refuse-only** — it may *withhold* itself when the property is not `0`, and it can never *grant* itself anything, so it adds a fail-closed guard rather than a second decision; (c) an unconditional `start phosphor_agentd` anywhere.
 
 So there are exactly two compliant outcomes: keygate's write lands after the trigger is registered (proven, not assumed), or S3 **fails** and the finding returns to the architecture owner — a start condition that depends on unverified init parse order is not a contract.
 
@@ -221,4 +225,4 @@ A1, A2, A3 and A4(b) each require **a reboot of the Pixel**, and A3 requires a k
 1. The key chord (which chord, how to read without a live framework) — **still open**, §10.2 owner Phase 5; this spec ships the stub and the fail-closed requirement for the successor.
 2. The correct early init trigger that both reads `persist.*` and precedes agentd's consumer (§3.1/A9) — builder, proven empirically.
 3. The documented host **clear** form for the latch (§5 row 1) — builder, must be stated in the completion note so the recovery procedure is written down somewhere executable.
-4. `ro.boot.phosphor.safeboot` readability under keygate's domain (§2 A3) — carried, gates A3 only.
+4. ~~`ro.boot.phosphor.safeboot` readability under keygate's domain (§2 A3)~~ — **CLOSED by the S3 preflight (erratum ⑯):** the `ro.boot.` prefix row (`property_contexts:1088`) types it `bootloader_prop`, and `get_prop(domain, bootloader_prop)` at `domain.te:519` grants every domain read — T1 needs **zero** sepolicy work. Bonus confirmation: `setprop` on `ro.boot.*` from shell is refused at :53670 (REC-2's immutability, policy-proven). Residual related cleanups: `phosphor_keygate.te:8-9`'s comment cites a phantom `boot_prop`/C1 mechanism (comment-only fix); A7's evidence must verify the staged `/system_ext/etc/passwd` 7520 row before A1, since the current `out/` copy is a stale S1-era 0-byte file (preflight BUG #6).
