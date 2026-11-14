@@ -71,6 +71,8 @@ phosphor_agentd phosphor_keygate
 
 ## Option (b) fix round (2026-11-13, post-audit, PM-approved)
 
+> **SUPERSEDED-BY NOTE (2026-11-13, final re-verify fold-back):** this section is the *round-1* record. The same day's paper-fix round superseded it: deferral ledgered to **S7** (not S5 — S7 §7 item 6), gnss_device added, final rule count **17** at `22809e3`/`8adacb5`. Final disposition: docs/specs/P5-S2-FIXROUND-REAUDIT.md verdict ACCEPT.
+
 **Audit verdict was NOT ACCEPT (BUG #1 CRITICAL / #2/#3 HIGH, both independently reproduced by the Supervisor).** PM chose option (b): make the rules strict-clean; enforcement-regime decision deferred to S8.
 
 - Payload `225c3a9`: blanket `dev_type` rules (inert — 12 plat-baseline violations, allow wins at runtime) replaced by §8's named types `radio_device`/`camera_device`/`audio_device` chr+blk (plat-public, `public/device.te:5,11,20`). Shell inbound-binder neverallow (83 violations = generic app-domain binder baseline; rule was written against S5's future rules) **deferred to S5**, obligation recorded in-tree + here. Rule count restored to the plan's 15.
