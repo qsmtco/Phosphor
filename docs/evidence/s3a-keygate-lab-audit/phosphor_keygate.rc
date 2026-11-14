@@ -1,0 +1,26 @@
+# phosphor_keygate -- the P5-S3 boot-decision service.
+# Spec: docs/specs/P5-S3-keygate-service.md (rev 2). Architecture §6.5.
+#
+# NEW-6 facts (acceptance A10 requires them here):
+#  (a) No Phosphor domain holds `set` on the latch type: nothing inside the running system
+#      can write persist.phosphor.safeboot in either direction. Keygate reads it only.
+#  (b) The immutable host-set ro.boot.phosphor.safeboot carries REC-2 independently of the
+#      latch; the latch is a convenience.
+#  (c) For the one documented writer -- the host, over adb, out-of-band -- clearing is
+#      exactly as symmetric as setting: host+cable is the trusted recovery authority.
+#
+# Trigger: load_persist_props_action, NOT late-init (erratum 14: late-init forks keygate
+# before load_persist_props, so T2 would read absent on every boot). All .rc files are
+# parsed before any action executes (init.cpp:347-369), so agentd's
+# `on property:sys.phosphor.safeboot=0` is already registered when keygate writes; the
+# queue_property_triggers sweep re-checks property actions after parse (preflight BUG #7).
+# A9's >=5-boot empirical ordering proof remains mandatory.
+
+service phosphor_keygate /system/bin/phosphor-keygate
+    class core
+    user system_ext_phosphor_keygate
+    group system_ext_phosphor_keygate
+    oneshot
+
+on load_persist_props_action
+    start phosphor_keygate
