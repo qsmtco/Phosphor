@@ -1,6 +1,6 @@
 # P5-S2 — SELinux foundation: `phosphor_*` types, domains, and the safe-boot property
 
-**Phase:** 5 · **Spec ID:** P5-S2 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+**Phase:** 5 · **Spec ID:** P5-S2 · **Rev:** 3 (errata ①–⑫ PM-approved 2026-11-15; ③–⑪ were build-time re-expressions recorded in docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md — backslash join, dev_type scope, private placement, config.fs AIDs 7520-7523, blanket device form, all-private policy, source-side binder, raw type declarations, AID partition prefixes, netlink drop) · **Owner:** Coder (builder) / Debugger (auditor)
 **Status:** DRAFT — awaiting PM approval.
 **Depends on:** **P5-S1** (the `packages/phosphor/sepolicy/{public,private}` directories and the `SYSTEM_EXT_*_SEPOLICY_DIRS` wiring exist only after S1).
 **Blocks:** **P5-S3, P5-S4, P5-S5, P5-S6, P5-S7** — every one of them needs its domain, its property access, or its file type from this spec. S8 depends on S2 transitively.
@@ -47,7 +47,7 @@ Verified against `<tree> = ~/projects/grapheneos-2026091900`. Rows marked **[RE-
 | C12 | `file` class operation set (`execute`, `read`, `write`, `create`, `getattr`, `setattr`, `map`, `append`, `unlink`, `rename`, `open`) and `execute_no_trans`, `entrypoint` | `system/sepolicy/private/access_vectors:11-38`, `:180-185` |
 | C13 | `exact bool` property shape is already used for `sys.boot_completed` | `system/sepolicy/private/property_contexts` (`sys.boot_completed` row) **[RE-VERIFY]** |
 | C14 | The Phosphor policy dirs are wired as `SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS` / `SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS` (S1 §3 B5), and **`system_ext` policy is admitted to the `sepolicy_neverallows` target** — which is why the §8 `neverallow` set is legal to compile there. (The obsolete `BOARD_PLAT_*_SEPOLICY_DIR` names are `KATI_obsolete_var` in this tree and hard-abort the build.) | `system/sepolicy/Android.bp:943` (`sepolicy_neverallows` srcs = plat_public, plat_private, **system_ext_public, system_ext_private**, product_public, product_private, vendor, odm); var→Soong plumbing `build/make/core/soong_config.mk:219-220`; consumer `system/sepolicy/build/soong/build_files.go:88-89` **[RE-VERIFY]** |
-| C15 | System AIDs are declared centrally; our four UIDs need entries there. **Path is `system/core/libcutils/include/private/`, not `system/core/include/private/`** (the latter does not exist — `find . -name android_filesystem_config.h -not -path './prebuilts/*'` returns exactly one non-prebuilt hit) | `system/core/libcutils/include/private/android_filesystem_config.h` **[RE-VERIFY]** |
+| C15 | System AIDs are declared centrally; our four UIDs need entries there. **Path is `system/core/libcutils/include/private/`, not `system/core/include/private/`** (the latter does not exist — `find . -name android_filesystem_config.h -not -path './prebuilts/*'` returns exactly one canonical non-prebuilt hit plus two legacy cutils/ shim copies (erratum ② — the edit path is the canonical one)) | `system/core/libcutils/include/private/android_filesystem_config.h` **[RE-VERIFY]** |
 
 **Why C14 matters, and the mechanism stated correctly:** a `neverallow` is not legal in every policy dir — it is legal only where the `sepolicy_neverallows` target admits it. That target (`system/sepolicy/Android.bp:943`) compiles the neverallow set from `plat_public + plat_private + system_ext_public + system_ext_private + product_public + product_private + vendor + odm`. So **`system_ext` carries our `neverallow` because it is admitted to that target** — *not* "because system_ext is platform policy", which is the wrong reason and would let the next reader re-derive the choice wrongly (e.g. conclude that `BOARD_VENDOR_SEPOLICY_DIRS` is equivalent, or that any platform-ish dir will do). Using a dir *outside* that list would make the entire §8 rule set compile-fail, and the natural repair — deleting the rules — would silently drop every guarantee. This is the single most important structural choice in the spec, so it is cited to the target rather than to the variable name.
 
@@ -203,7 +203,9 @@ type phosphor_agentd_data_file, file_type, data_file_type;
 /data/misc/phosphor(/.*)?                     u:object_r:phosphor_agentd_data_file:s0
 ```
 
-`public/seapp_contexts` (label the two apps to their domains):
+`private/seapp_contexts` (label the two apps to their domains; **erratum ① (PM-approved 2026-11-15): private placement** — seapp_contexts is private-only in this tree; a public/ copy silently never applies):
+
+
 
 ```
 user=_app isPrivApp=true seinfo=platform name=com.phosphor.shell   domain=phosphor_shell type=privapp_data_file levelFrom=user
