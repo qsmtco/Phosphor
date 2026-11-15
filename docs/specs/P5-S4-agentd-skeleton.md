@@ -1,6 +1,6 @@
 # P5-S4 — `phosphor_agentd`: native daemon skeleton
 
-**Phase:** 5 · **Spec ID:** P5-S4 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+**Phase:** 5 · **Spec ID:** P5-S4 · **Rev:** 2 (errata ⑰–㉑ 2026-11-15 PM-approved: rc prefixed AIDs; init-managed seqpacket socket at /dev/socket with label-only admission; crash-budget wording corrected — daemon self-backstop only; sock_file grant mooted; A6 wording/deferral) · **Owner:** Coder (builder) / Debugger (auditor)
 **Status:** DRAFT — awaiting PM approval.
 **Depends on:** **P5-S1** (module `phosphor-agentd`), **P5-S2** (`phosphor_agentd` domain, `phosphor_agentd_exec`, `phosphor_agentd_data_file`, `phosphor_risk_policy_file` read grant, the binder-target `neverallow`), **P5-S3** (`sys.phosphor.safeboot` must exist and be written, or the start condition never fires).
 **Blocks:** **P5-S7** (the AF_UNIX end that S7's client connects to) and every later phase's agent brain. S6's "bind from agentd path" acceptance needs this daemon alive.
@@ -52,12 +52,17 @@ A native daemon that **is** the agent's platform home, with **zero** capability 
 service phosphor_agentd /system/bin/phosphor-agentd
     class core
     disabled
-    user phosphor_agentd
-    group phosphor_agentd
+    user system_ext_phosphor_agentd
+    group system_ext_phosphor_agentd
+    socket phosphor_agentd seqpacket+passcred 0660 system_ext_phosphor_agentd system_ext_phosphor_agentd
 
 on property:sys.phosphor.safeboot=0
     start phosphor_agentd
 ```
+
+**Erratum ⑰ (PM-approved 2026-11-15):** `user`/`group` are the partition-prefixed AID names (`system_ext_phosphor_agentd`, uid 7521) — the unprefixed form fails `host_init_verifier`/bionic exactly as S3 preflight BUG #1 showed for keygate.
+
+**Erratum ⑲ (PM-approved 2026-11-15, option a):** the AF_UNIX socket is **init-managed**, not daemon-created: `socket phosphor_agentd seqpacket+passcred` per the lmkd precedent (`system/memory/lmkd/lmkd.rc`), created by init at `/dev/socket/phosphor_agentd` synchronously at service start with the fd passed to the process (`init/README.md:396-404`, retrieved via `android_get_control_socket()`). Consequences: (i) the daemon never creates/binds/unlinks the socket file — §2.5's bind/unlink steps are removed and the stale-socket/foreign-owner edge cases are moot; (ii) the path moves from `/data/misc/phosphor/agentd.sock` (unreachable — the 0700 private dir blocked client traversal; preflight PF-BUG #3) to `/dev/socket/phosphor_agentd`; (iii) **peer admission is by SELinux label only** (`SO_PEERSEC` via `getpeercon(3)`, no policy perm needed — kernel AVC happens on the client's `connect`, which is S7's allow to author): the spec's UID==7523 check was incoherent — PhosphorShell is a plain app with an app uid, never 7523 (PF-BUG #2) — and DAC/kernel scoping (`0660` + connect-check) does the UID dimension. `SO_PEERCRED` stays enabled via `+passcred` as defense-in-depth logging (pid/uid recorded in `peer_rejected`), but the *admission* decision is the label check.
 
 `[VERIFY AT BUILD: `onrestart` syntax — architecture §2.2 says "`onrestart` re-exec". Record the actual `onrestart` block used, e.g. `onrestart restart phosphor_shell`? No: agentd's own re-exec is init's ordinary service restart; an `onrestart` section is for *reacting* to it. The spec requires: init restarts the daemon on unexpected exit (the default for a non-`oneshot` service) and any `onrestart` action is declared and justified in the completion note.]`
 
@@ -91,10 +96,10 @@ One line per event, JSON or `key=value`, prefixed `phosphor-agentd:` — stable 
 
 ### 2.5 The socket (framing only; semantics are S7)
 
-- `AF_UNIX`, `SOCK_SEQPACKET`, path `/data/misc/phosphor/agentd.sock` (S7 may move it; **the path is a shared constant owned by `services/PhosphorIpc/`**, created here).
-- Bind with `umask` such that the socket is `0600` owned by `phosphor_agentd`; on every `accept`, read `SO_PEERCRED`, and admit **only** a peer whose UID is `AID_PHOSPHOR_SHELL` **and** whose domain is `phosphor_shell`. Two checks, not one: a UID alone would admit a shell process that had been subverted into a different label, and a label alone would admit any process in that domain.
+- `AF_UNIX`, `SOCK_SEQPACKET`, **init-managed** at `/dev/socket/phosphor_agentd` (erratum ⑲; the path constant is owned by `services/PhosphorIpc/`, created here).
+- The fd arrives from init (`android_get_control_socket("phosphor_agentd")`); init created it `seqpacket+passcred 0660` owned by `system_ext_phosphor_agentd`. On every `accept`, read the peer label via `getpeercon(3)` and admit **only** `u:r:phosphor_shell:s0` (erratum ⑲: label-only admission — the UID check was incoherent for an app peer; `SO_PEERCRED` from `+passcred` is logged as defense-in-depth, not an admission criterion).
 - Framing: length-prefixed, max frame size enforced (`[VERIFY AT BUILD: choose and record — suggested 1 MiB, with a documented "screen payload may exceed" review]`), oversized frame ⇒ close connection, log `peer_rejected`.
-- No blocking accept loop that cannot be cancelled: one `poll()`/epoll loop, clean `SIGTERM` shutdown that unlinks the socket.
+- No blocking accept loop that cannot be cancelled: one `poll()`/epoll loop, clean `SIGTERM` shutdown (**no unlink — init owns the socket file**).
 - **Zero message semantics in S4**: a well-formed frame is logged as `frame_len=` and dropped with a `NOT_IMPLEMENTED` reply. S7 replaces the handler.
 
 ### 2.6 Health and crash restart
@@ -102,9 +107,8 @@ One line per event, JSON or `key=value`, prefixed `phosphor-agentd:` — stable 
 - **Health surface for S8, defined here:**
   - `init.svc.phosphor_agentd` state (`running`/`restarting`/`stopped`) — from init.
   - `/data/misc/phosphor/health` — a file the daemon touches/updates each loop tick with `pid`, `started_at`, `policy_version`, `last_frame_at`. **Written by agentd, read by `phosphor-ctl` (S8).** Not a socket, not a binder call: S4 needs **no** IPC to be healthy.
-- **Restart:** init's default for a non-`oneshot` service. No `onrestart` action required; if one is added it must be justified (§2.1 note).
-- **Crash-loop behaviour (architecture §7 row 3):** init's `service … ` has a default crash-restart budget; the daemon must additionally back off **itself** on a fast-crash pattern: if it starts and dies within 5 s more than 3 consecutive times, it must write a `crashloop` marker to `/data/misc/phosphor/health` and exit with status 1 so init's own limits engage rather than a hot loop. Rationale: a hot loop starves the boot; the shell's offline state (§2.2) is the user-visible remedy and **must be reachable**.
-- **Kill ⇒ restart** is an acceptance criterion (§4 A4), so no `oneshot`, no `disabled`-only-once behaviour, no `setprop` self-clear.
+- **Restart:** init's default for a non-`oneshot` service: a fixed 5-second delay restart, **forever** — init has *no* crash budget for non-critical services (the `crash_count_ > 4` gate at `service.cpp:398-410` applies only to `SVC_CRITICAL`/process-updatable services; erratum ⑱). Therefore the daemon's own backstop is the *only* backstop: if it starts and dies within 5 s more than 3 consecutive times, it writes a `crashloop` marker to `/data/misc/phosphor/health` and exits with status 1 so the hot loop is broken by the daemon itself. Rationale: a hot loop starves the boot; the shell's offline state (§2.2) is the user-visible remedy and **must be reachable**.
+- **Kill ⇒ restart** is an acceptance criterion (§4 A4), so no `oneshot`, no `disabled`-only-once behaviour, no `setprop` self-clear. A4's post-kill wait is **≥6 s** (5 s restart delay + margin; the earlier `sleep 3` was insufficient — erratum ⑱).
 
 ### 2.7 What the daemon must never do (audited)
 
@@ -166,9 +170,9 @@ Pass = running with a different pid, and `logcat` shows a second `start` line wi
 - Pass = no socket file, `policy_error` logged, `health` carries `crashloop` after the pattern.
 
 **A6 — Socket is peer-restricted and framed.**
-- `adb shell ls -l /data/misc/phosphor/agentd.sock` → `srw------- phosphor_agentd phosphor_agentd`.
-- From a shell that is **not** `phosphor_shell` (`adb shell`): connect attempt is accepted by the kernel then `peer_rejected` logged with the caller's uid and the connection closed. (S4 does not implement a full client, so this is checked with `socat`/`nc -U` or S7's test tool — if the tool does not exist yet, the check is deferred to S7 **and recorded as deferred**, not skipped silently.)
-- Oversized frame ⇒ closed + `peer_rejected`.
+- `/dev/socket/phosphor_agentd` exists while agentd runs: `srw-rw----` owned `system_ext_phosphor_agentd` (erratum ⑲: init-managed; vanished when the service is down because init unlinks it).
+- Peer rejection: **deferred to S7** (erratum ㉑) — the user build's toybox `nc` is stream-only and `socat` is absent, and an adb-shell probe would itself generate the avc denials A3 forbids. S7's client tool performs the negative test (wrong-label connect ⇒ `peer_rejected` + close). Recorded as deferred, not skipped.
+- Oversized frame ⇒ closed + `peer_rejected` (also via S7's tool at S7 time; S4 proves the length check exists in lab).
 
 **A7 — Structured log vocabulary present.** Each of `start`, `policy_loaded`, `socket_listening`, `shutdown` observed in one session. `peer_rejected` observed in A6. Field names exactly as §2.3.
 
