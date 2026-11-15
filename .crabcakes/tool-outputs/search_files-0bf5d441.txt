@@ -1,0 +1,9 @@
+[5 matches in 1 files]
+docs/evidence/s3b-keygate-build-audit/REPORT.md (20KB, 5 matches)
+  Line 67: One wording erratum (BUG #3): the evidence says all "other four" staged passwd copies are "0 bytes"; at the **staged** layer `odm/etc/passwd` does not exist at all (system/system_ext/product/vendor exist; odm's row is absent). Immaterial to correctness — see BUG #3.
+  Line 71: - `host_init_verifier` run with the build's own argument form (observed verbatim from in-graph edges) and inputs — the five ETC passwd intermediates + five property_contexts — positional = our staged `.rc`: **EXIT=0, no output.**
+  Line 130: **Assumption violated:** Evidence "Passwd gate" says the other four passwd copies are "0 bytes" (staged layer), and plan §8 step 0's `test -s` loop (L555–558) asserts non-empty at the **staged** `out/target/product/akita/<p>/etc/passwd` layer.
+  Line 131: **Attack vector:** Actual staged layer today: system/system_ext/product/vendor exist, `odm/etc/passwd` **missing**; the non-system_ext staged copies are 0 B — which is *correct* per generator semantics (Check 7). Re-running §8 verbatim would spuriously STOP (step 0 `test -s` fails on odm) despite correct verifier inputs.
+  Line 132: **Root cause:** Layer confusion: the verifier consumes `obj/ETC/passwd_<p>_intermediates/passwd_<p>`, not the staged `/<p>/etc/passwd` copies; emptiness at the staged layer is the documented no-AID outcome.
+
+[Open with read_file line=N only to edit.]

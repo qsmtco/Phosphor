@@ -1,0 +1,235 @@
+### phosphor_agentd.te
+type phosphor_agentd, domain;
+type phosphor_agentd_exec, exec_type, file_type, system_file_type;
+init_daemon_domain(phosphor_agentd)
+
+get_prop(phosphor_agentd, phosphor_safeboot_prop)       # to log/verify its own start condition
+allow phosphor_agentd phosphor_risk_policy_file:file r_file_perms;
+allow phosphor_agentd phosphor_agentd_data_file:dir create_dir_perms;
+allow phosphor_agentd phosphor_agentd_data_file:{ file lnk_file } create_file_perms;
+
+# Platform daemon executed from /system — sepolicy_test requires coredomain (precedent: private/netd.te:1).
+typeattribute phosphor_agentd coredomain;
+### file.te
+type phosphor_risk_policy_file, file_type, system_file_type;
+type phosphor_agentd_data_file, file_type, data_file_type, core_data_file_type;
+### file_contexts
+/system/etc/phosphor(/.*)?                    u:object_r:phosphor_risk_policy_file:s0
+/system/bin/phosphor-agentd                   u:object_r:phosphor_agentd_exec:s0
+/system/bin/phosphor-keygate                  u:object_r:phosphor_keygate_exec:s0
+/data/misc/phosphor(/.*)?                     u:object_r:phosphor_agentd_data_file:s0
+### types.te
+# P5-S2 property types — raw declarations with explicit platform attributes.
+# Form matches the akita system_ext precedent
+# (vendor/google_devices/akita/sepolicy/system_ext/public/types.te).
+# HONEST RECORD (2026-11-12): an earlier bisect claimed the
+# system_public_prop() macro form broke sepolicy_test. That was WRONG: the
+# 142 "isolated_compute_allowed_property_type does not exist" stderr lines
+# are constant noise on BOTH S1 and S2 states, and several bisect "passes"
+# were stale ninja cache. The REAL sepolicy_test failures were the missing
+# coredomain / core_data_file_type attributes (fixed in this commit). This
+# form is retained merely because it is precedented and compiles; the macro
+# form was never proven broken.
+type phosphor_safeboot_prop, property_type, system_property_type, system_public_property_type;
+type phosphor_safeboot_latch_prop, property_type, system_property_type, system_public_property_type;
+### neverallows.te
+# S2-B relocation (build attempt 4 diagnostic): subtraction neverallows cannot be
+# CIL-converted in PUBLIC policy (libsepol avrule_list_to_cil: not/minus-self unsupported;
+# in-tree precedent: zero subtraction neverallows under system/sepolicy/public, six under
+# private/). The whole set moved public/ -> private/ (C14: system_ext_private is admitted
+# to sepolicy_neverallows, Android.bp:943); rule content unchanged from attempt 4.
+# --- keygate: it decides, and is denied everything else (arch §8 lines 416-417, NEW-3) ---
+neverallow phosphor_keygate phosphor_agentd_exec:file *;
+neverallow phosphor_keygate phosphor_agentd_data_file:file *;
+
+# keygate property access as a subtraction, in the in-tree form (C10; arch §8 line 417):
+# it may set nothing except the boot decision.
+neverallow phosphor_keygate { system_prop -phosphor_safeboot_prop }:property_service set;
+
+# keygate holds no binder, no network, no device node (arch §8 line 418). Enumerated per
+# standing ruling 2; S2-B amendment (audit BUG #5): binder class is exactly
+# { impersonate call set_context_mgr transfer } (access_vectors:520-526) and keygate
+# needs none, so all four are named.
+neverallow phosphor_keygate self:binder { impersonate call set_context_mgr transfer };
+neverallow phosphor_keygate self:tcp_socket *;
+neverallow phosphor_keygate self:udp_socket *;
+
+# --- agentd: capability-adjacent device nodes are unreachable (arch §8 line 412) ---
+# POSTEXEC FIX (2026-11-13, audit BUG #2/#9, PM-approved option b): the blanket dev_type
+# form was inert text — binary-mode checkpolicy showed 12 violations, all plat baseline
+# grants to every domain (binder/hwbinder/ashmem/null/zero/random/ptmx/owntty/pmsg/
+# property_info/properties_serial); the allow wins at runtime, so the blanket never
+# fired. Replaced with named plat-public device types, each strict-clean in binary-mode
+# checkpolicy on the shipped conf. §8:412 names telephony/radio, camera, LOCATION, and
+# netlink: radio_device, camera_device, gnss_device (public/device.te:5,11,64) are
+# delivered; audio_device is included as defense-in-depth beyond §8 (not an §8 name);
+# netlink remains undeliverable here (netlink_generic_socket has zero public
+# visibility -- erratum 12) and is recorded as a deviation, not silently dropped.
+# S8 owns the enforcement-regime decision (SELINUX_IGNORE_NEVERALLOWS on akita, audit
+# BUG #1); until then every rule here is validated by binary-mode checkpolicy, not by
+# the (disabled) build checker.
+neverallow phosphor_agentd radio_device:chr_file *;
+neverallow phosphor_agentd radio_device:blk_file *;
+neverallow phosphor_agentd camera_device:chr_file *;
+neverallow phosphor_agentd camera_device:blk_file *;
+neverallow phosphor_agentd gnss_device:chr_file *;
+neverallow phosphor_agentd gnss_device:blk_file *;
+neverallow phosphor_agentd audio_device:chr_file *;
+neverallow phosphor_agentd audio_device:blk_file *;
+
+# --- agentd: exactly one binder target (arch §8 line 413: broker only, nothing to the shell) ---
+# Attempt 9 fix: target-side -self is CIL-unconvertible (attempt 8 diagnostic);
+# precedented form is source-side subtraction (installd.te:242-246, netd.te:205-206).
+# Delivered predicate (fix-round honest wording, audit BUG #7): no domain may CALL
+# agentd except phosphor_broker. This is an INBOUND-only guarantee. agentd's own
+# OUTBOUND surface is not constrained by any S2 rule -- S6/S7 allow-scoping owns it.
+# (An earlier revision claimed outbound was covered by a companion rule; that
+# rule was removed in this commit's shell-inbound deferral, so the claim is gone.)
+neverallow { domain -phosphor_broker -phosphor_agentd } phosphor_agentd:binder call;
+
+# --- the safe-boot latch: exactly ONE non-init writer (R-2 discharged by enforcement; §6.5 NEW-6) ---
+neverallow { domain -shell -init } phosphor_safeboot_latch_prop:property_service set;
+
+# --- shell: broker or nothing (arch §8 line 414) ---
+# POSTEXEC FIX (2026-11-13, audit BUG #2/#3, PM-approved option b): the inbound-call
+# neverallow was DEFERRED, not fixed. Binary-mode checkpolicy showed 83 violations —
+# the generic plat binder-call baseline (system_server, servicemanager, every app can
+# call any app domain); an app-domain cannot opt out of it in S2, and S5's shell rules
+# do not exist yet, so the rule was written against a future state and was compile-time
+# text only. The §8 intent is NOT dropped: the obligation is ledgered to S7 (the IPC
+# spec whose §2.2 is the binder-surface section; re-audit BUG #8 disposition), which
+# owns authoring the broker-callable-by rule against S5/S6's real surfaces. S2's
+# completion note records the deferral.
+# What S2 enforces today: agentd's broker-only inbound (line above, strict-clean) and
+# the latch's exactly-one-writer (strict-clean).
+
+# --- the policy artifact is read-only to every Phosphor domain (NEW-4; arch §8 line 415) ---
+neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } phosphor_risk_policy_file:file { write append create rename setattr unlink };
+### phosphor.mk
+PRODUCT_PACKAGES += \
+    phosphor-agentd \
+    phosphor-keygate \
+    phosphor-ctl \
+    PhosphorShell \
+    PhosphorBroker
+
+PRODUCT_COPY_FILES += \
+    packages/phosphor/risk-policy/risk-policy.json:$(TARGET_COPY_OUT_SYSTEM)/etc/phosphor/risk-policy.json
+
+SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += packages/phosphor/sepolicy/public
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += packages/phosphor/sepolicy/private
+
+# P5-S2: OEM AIDs via the precedented config.fs generator (sdv_ivi precedent);
+# keeps the third-party edit surface at zero (was: 4-line header edit, build-incompatible).
+TARGET_FS_CONFIG_GEN += packages/phosphor/config.fs
+### keygate Android.bp
+cc_binary {
+    name: "phosphor-keygate",
+    stem: "phosphor-keygate",
+    srcs: ["main.cpp"],
+    shared_libs: [
+        "libbase",
+        "liblog",
+    ],
+    init_rc: ["phosphor_keygate.rc"],
+}
+### keygate rc
+# phosphor_keygate -- the P5-S3 boot-decision service.
+# Spec: docs/specs/P5-S3-keygate-service.md (rev 2). Architecture §6.5.
+#
+# NEW-6 facts (acceptance A10 requires them here):
+#  (a) No Phosphor domain holds `set` on the latch type: nothing inside the running system
+#      can write persist.phosphor.safeboot in either direction. Keygate reads it only.
+#  (b) The immutable host-set ro.boot.phosphor.safeboot carries REC-2 independently of the
+#      latch; the latch is a convenience.
+#  (c) For the one documented writer -- the host, over adb, out-of-band -- clearing is
+#      exactly as symmetric as setting: host+cable is the trusted recovery authority.
+#
+# Trigger: load_persist_props_action, NOT late-init (erratum 14: late-init forks keygate
+# before load_persist_props, so T2 would read absent on every boot). All .rc files are
+# parsed before any action executes (init.cpp:347-369), so agentd's
+# `on property:sys.phosphor.safeboot=0` is already registered when keygate writes; the
+# queue_property_triggers sweep re-checks property actions after parse (preflight BUG #7).
+# A9's >=5-boot empirical ordering proof remains mandatory.
+
+service phosphor_keygate /system/bin/phosphor-keygate
+    class core
+    user system_ext_phosphor_keygate
+    group system_ext_phosphor_keygate
+    oneshot
+
+on load_persist_props_action
+    start phosphor_keygate
+### agentd Android.bp (S1 stub)
+cc_binary {
+    name: "phosphor-agentd",
+    stem: "phosphor-agentd",
+    srcs: ["main.cpp"],
+}
+### agentd main.cpp head
+int main() { return 0; }
+### git status
+### conf exists?
+-rw-r--r-- 1 cptjaqx cptjaqx 2877863 Nov 14 13:08 out/soong/.intermediates/system/sepolicy/system_ext_sepolicy.conf/android_common/akita/system_ext_sepolicy.conf
+### conf: all phosphor_agentd lines
+97413:type phosphor_agentd_data_file, file_type, data_file_type, core_data_file_type;
+97416:#line 1 "packages/phosphor/sepolicy/private/phosphor_agentd.te"
+97417:type phosphor_agentd, domain;
+97418:type phosphor_agentd_exec, exec_type, file_type, system_file_type;
+97429:allow init phosphor_agentd_exec:file { getattr open read execute map };
+97431:allow init phosphor_agentd:process transition;
+97435:allow phosphor_agentd phosphor_agentd_exec:file { entrypoint open read execute getattr map };
+97443:dontaudit init phosphor_agentd:process noatsecure;
+97447:allow init phosphor_agentd:process { siginh rlimitinh };
+97453:type_transition init phosphor_agentd_exec:process phosphor_agentd;
+97461:allow phosphor_agentd phosphor_safeboot_prop:file { getattr open read map };
+97464:allow phosphor_agentd phosphor_risk_policy_file:file { getattr open read ioctl lock map watch watch_reads };
+97465:allow phosphor_agentd phosphor_agentd_data_file:dir { create reparent rename rmdir setattr { { open getattr read search ioctl lock watch watch_reads } { open search write add_name remove_name lock } } };
+97466:allow phosphor_agentd phosphor_agentd_data_file:{ file lnk_file } { create rename setattr unlink { { getattr open read ioctl lock map watch watch_reads } { open append write lock map } } };
+97469:typeattribute phosphor_agentd coredomain;
+97669:neverallow phosphor_keygate phosphor_agentd_exec:file *;
+97670:neverallow phosphor_keygate phosphor_agentd_data_file:file *;
+97698:neverallow phosphor_agentd radio_device:chr_file *;
+97699:neverallow phosphor_agentd radio_device:blk_file *;
+97700:neverallow phosphor_agentd camera_device:chr_file *;
+97701:neverallow phosphor_agentd camera_device:blk_file *;
+97702:neverallow phosphor_agentd gnss_device:chr_file *;
+97703:neverallow phosphor_agentd gnss_device:blk_file *;
+97704:neverallow phosphor_agentd audio_device:chr_file *;
+97705:neverallow phosphor_agentd audio_device:blk_file *;
+97715:neverallow { domain -phosphor_broker -phosphor_agentd } phosphor_agentd:binder call;
+97734:neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } phosphor_risk_policy_file:file { write append create rename setattr unlink };
+### conf: seqpacket anywhere
+0
+### public/domain.te unix socket grants
+### private/domain.te unix socket grants
+29:allow domain self:unix_dgram_socket { create_socket_perms sendto };
+30:allow domain self:unix_stream_socket { create_stream_socket_perms connectto };
+37:  allow domain su:unix_stream_socket { connectto getattr getopt read write shutdown };
+38:  allow domain su:unix_dgram_socket sendto;
+303:allowxperm domain { domain pdx_channel_socket_type }:{ unix_dgram_socket unix_stream_socket }
+304:  ioctl unpriv_unix_sock_ioctls;
+576:unix_socket_connect(domain, prng_seeder, prng_seeder)
+1342:neverallow { domain -zygote -system_server } zygote:unix_stream_socket connectto;
+1345:neverallow { domain -system_server -webview_zygote -app_zygote } webview_zygote:unix_stream_socket connectto;
+1350:neverallow domain tombstoned_crash_socket:unix_stream_socket connectto;
+1355:neverallow { domain -dumpstate -incidentd -system_server } tombstoned_intercept_socket:unix_stream_socket connectto;
+### te_macros socket perm sets
+### access_vectors unix classes
+45:common socket
+46-{
+47-# inherited from file
+48-	ioctl
+49-	read
+50-	write
+51-	create
+52-	getattr
+53-	setattr
+54-	lock
+55-	relabelfrom
+56-	relabelto
+57-	append
+58-	map
+59-# socket-specific
+### plat sepolicy seqpacket users
+grep: system/sepolicy/public/domain.te: No such file or directory

@@ -1,0 +1,25 @@
+[1 matches in 1 files]
+docs/evidence/s3b-keygate-build-audit/REPORT.md (20KB, 1 matches)
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-109:---
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-110:
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-111:## Part C — findings
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-112:
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-113:### BUG #1
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-114:**Severity:** MEDIUM
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-115:**Assumption violated:** Plan §8 step 1 (and deviation note 3's forward plan) assumes `host_init_verifier` validates Soong-`init_rc` files inside `m phosphor-keygate` (and again "in a full build"). On this tree it validates nothing for Soong modules, now or ever.
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-116:**Attack vector:** `ninja -t commands` on the staged `.rc` edge shows a bare `cp`; census of the whole graph shows 109 `host_init_verifier` execution edges, none touching phosphor (all Make-side vendor `.rc` installs); `build/make/core/base_rules.mk:611` gates `copy-many-init-script-files-checked` to non-Soong modules; `build/soong/fsgen/filesystem_creator.go:1714` sets `Enable_host_init_verifier_check=false` unconditionally; no `host_init_verifier_output.txt` exists anywhere in `out/` despite a [... line cut ...]
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-117:**Reproduction:** `cd TREE && prebuilts/build-tools/linux-x86/bin/ninja -f out/combined-akita.ninja -t commands out/target/product/akita/system/etc/init/phosphor_keygate.rc` → bare cp; `find out -name 'host_init_verifier_output.txt'` → nothing.
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-118:**Root cause:** AOSP moved per-file init-rc verification to the filesystem/staging layer (2025 refactor), and the generated-image creator disables it; GrapheneOS tree inherits both. The plan quoted the old Make mechanism (`definitions.mk:3137-3168`).
+  Line 119: **Fix:** (a) Amend plan §8 step 1's EXPECT text and evidence deviation note 3: state that the build does NOT verify Soong `init_rc`, and that coverage = the audit's direct verifier run (green, this round) — cite `docs/evidence/s3b-keygate-build-audit/REPORT.md` Check 8. (b) Add one explicit command to S8's verification block: `out/host/linux-x86/bin/host_init_verifier -p <obj/ETC/passwd_*_intermediates/passwd_*> … <staged phosphor_keygate.rc>` (exact argument form recorded in this report). (c) O [... omitted end of long line]
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-120:
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-121:### BUG #2
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-122:**Severity:** LOW
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-123:**Assumption violated:** Evidence "Static checks" claims payload-wide `boot_prop|C1` → empty, and plan §6-guards (L409) + §8 step 6 (L616) still specify the unbounded pattern as a pass/fail gate.
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-124:**Attack vector:** `rg -n 'boot_prop|C1' packages/phosphor` → 8 hits (6× `phosphor_safeboot_prop` substring, 2× `C14`/`C10` comments). The gate as written can never pass; the *bounded* rev-2 form is genuinely empty.
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-125:**Root cause:** Self-inflicted scope gap in my own S3-A BUG #4 fix: I bounded the §6 locate step but left the two guard lines unbounded. The Supervisor's evidence sentence inherited the unbounded form.
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-126:**Fix:** Word-bound both plan guard lines (`\bboot_prop\b|\bC1\b`) and amend the evidence line to cite the bounded form. Zero payload impact.
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-127:
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-128:### BUG #3
+  docs/evidence/s3b-keygate-build-audit/REPORT.md-129:**Severity:** LOW
+
+[Open with read_file line=N only to edit.]

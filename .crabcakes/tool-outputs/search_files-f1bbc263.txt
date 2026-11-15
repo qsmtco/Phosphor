@@ -1,0 +1,60 @@
+[3 matches in 2 files]
+docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md (3KB, 1 matches)
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-10:- **Step-count delta:** 4,514 incremental steps vs the 168,199 from-scratch baseline (Sep 24). This was an incremental build on the existing 109G `out/` — the baseline documents a clean-tree build. No flag, target, variant, or lunch argument differed. The `[ 99% 4556/4557]` markers seen mid-build were the soong-analysis and packaging phases.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-11:- `out/` size: 109G → 109G (no measurable delta; target-files zip rebuilt).
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-12:- Fresh vbmeta digest computed this run: `6cf7c98f…95b59c7` (add_img_to_target_files, 08:16:43).
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-13:
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-14:## A3 — all five modules installed
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-15:- Binaries: `out/target/product/akita/system/bin/phosphor-agentd` (51392B), `phosphor-keygate` (51392B), `phosphor-ctl` (51464B), all `-rwxr-xr-x`, built 08:15.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-16:- APKs at `system/priv-app/` (rev-2 erratum; `privileged: true` → priv-app per Soong app.go:1091-1093):
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-17:  - `PhosphorShell.apk` → `package: name='com.phosphor.shell' versionCode='37' versionName='17'`
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-18:  - `PhosphorBroker.apk` → `package: name='com.phosphor.broker' versionCode='37' versionName='17'`
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-19:- Platform certificate (apksigner, jdk25 on PATH): both APKs → `CN=Android` test platform cert, SHA-256 `c8a2e9bc…192ab8`, SHA-1 `27196e38…e33dfa` — **our platform certificate** (spec §A3: "with our platform certificate").
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-20:- `grep -cE '^(phosphor-|Phosphor)' product_packages.txt` → **exactly 5**: PhosphorBroker, PhosphorShell, phosphor-agentd, phosphor-ctl, phosphor-keygate.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-21:- `PRODUCT_COPY_FILES` artifact: `system/etc/phosphor/risk-policy.json` (3 bytes, `{}`) installed.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-22:
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-23:## A4 — zero boot-time behavior (static proof)
+  Line 24: - `grep -rn init_rc packages/phosphor` → 0.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-25:- `packages/phosphor/sepolicy/{public,private}` contain READMEs only.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-26:- `aapt2 dump xmltree` AndroidManifest.xml on both APKs → **0** activity/service/receiver/provider.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-27:- `PRODUCT_COPY_FILES` in phosphor.mk = exactly 1 rule (the risk-policy json).
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-28:
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-29:## A7 — no device operation
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-30:No adb/fastboot invocations anywhere in this phase. Build-only.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-31:
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-32:## Notes for the auditor
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-33:1. Incremental-vs-baseline step count (4,514 vs 168,199) is explained above; the spec's A2 records the delta — this is that record.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-34:2. `BUILD_TIMESTAMP` epoch artifacts in APK entries (2009-01-01 zip normalization) are standard.
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-35:3. Deviation: none in 1c. Recipe verbatim. (1b's deviations are in the 1b evidence file.)
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-36:
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-37:## Auditor amendments (2026-11-12, post-accept)
+  docs/handoffs/P5-S1-PHASE-1c-EVIDENCE.md-38:
+docs/handoffs/P5-S1-PHASE-1b-PLAN.md (95KB, 2 matches)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-6:**Status of this file:** this plan **is the fidelity authority for the Phase 1b audit** (instructions L55: "the plan file is the fidelity authority for the audit. Chat reports are not the authority"). Every command and every file content below is exact and is to be transcribed mechanically.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-7:**Word marker for this round:** the delegation carried the word marker **`please write`** (author round, rev 3 of this plan); no `please proceed` execution marker is claimed here. Execution of this plan happens in a seat that can write outside `/home/cptjaqx/projects/Phosphor`.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-8:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-9:**Scope of Phase 1b (in):** bare mirror of the Phase-1a repo; `.repo/local_manifests/phosphor.xml`; `repo sync -n` then a project-only `repo sync`; A1 assertion; the single `device.mk` line; `adevtool generate-all -d akita`; re-pin `manifest-pinned.xml`; A5 `repo status -j24`; target-state check on `vendor/google_devices/akita`.
+  Line 10: **Out of scope (hard boundaries, all phases):** no device operation of any kind — no flash, wipe, reboot, `adb`, `fastboot` (A7); no build (`m`) — that is Phase 1c; no `OFFICIAL_BUILD=true`; no second third-party edit; no hand-edit of `vendor/google_devices/akita`; no `/system/app/` path anywhere (rev-2 erratum); no `init_rc`, sepolicy content, or manifest components (all Phase 1a, already fixed).
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-11:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-12:---
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-13:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-14:## 0. Deviations from the delegation payload, and why
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-696:---
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-697:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-698:## 9. What Phase 1b must NOT do (audit checklist for the execution round)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-699:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-700:- [ ] No `m`/`lunch`/`envsetup` — the build is Phase 1c (A2). Any `out/` change in 1b is out of scope.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-701:- [ ] No second edit to `vendor/adevtool` beyond the one `device.mk` line; no edit to `vendor/google_devices/**` at all.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-702:- [ ] No device tooling, no `sudo` except S6.1's AppArmor script.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-703:- [ ] No `/system/app/` string written anywhere (rev-2 erratum; this phase writes no install paths at all — the assertion is that none appear in any 1b artifact).
+  Line 704: - [ ] No `init_rc`, no `.te` files, no `.rc` files, no manifest components introduced (1b writes none of these files).
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-705:- [ ] `OFFICIAL_BUILD` unset and never used.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-706:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-707:---
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-708:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-709:## COMPLETENESS (template — one line per planned step, plus one line per BUG proving the repair)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-710:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-711:Two halves. **Part A** is the executing round's checklist (one line per planned step, filled with pasted evidence). **Part B** is this author round's repair proof: one `[x]` line per audited BUG # (rev 2) and one per NEW item (rev 3), each citing the rev-3 line number where the repair lives and the command output that confirms it. Both halves are already filled in — they are the deliverable of the author round.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-712:
+
+[Open with read_file line=N only to edit.]

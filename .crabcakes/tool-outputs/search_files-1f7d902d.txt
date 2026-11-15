@@ -1,0 +1,36 @@
+[2 matches in 1 files]
+docs/specs/P5-S3-PREFLIGHT-PROBE.md (17KB, 2 matches)
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-224:   mandatory per spec — but the static analysis predicts success, unlike BUG #2 which it
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-225:   cannot survive.
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-226:3. **`.rc` install location.** `phosphor-keygate` is a plain `cc_binary` → `/system/bin`
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-227:   (S1 spec :18, verified in `out/.../system/bin/phosphor-keygate`); adding `init_rc` in S3
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-228:   installs the `.rc` to `/system/etc/init/` (same partition as the module). init scans it:
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-229:   init.cpp:353. A system_ext placement would need `system_ext_specific: true` (init.cpp:358
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-230:   scans that too) — unnecessary here; either partition is scanned.
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-231:
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-232:---
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-233:
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-234:## Verified claims (no bug)
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-235:
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-236:- **V1 — init scans both partitions' rc dirs** (init.cpp:353 `/system/etc/init`, :358
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-237:  `/system_ext/etc/init`). Consistent with BUG #7(3).
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-238:- **V2 — libbase property API in minimal native daemons:** `android-base/properties.h` is
+  Line 239: used by `system/core/watchdogd/watchdogd.cpp`, `system/core/gatekeeperd/gatekeeperd.cpp`,
+  Line 240: `system/core/llkd/libllkd.cpp`, `system/core/libprocessgroup/processgroup.cpp` — small,
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-241:  early, non-binder daemons; `GetProperty`/`SetProperty` (plus `GetBoolProperty`) fit §3.3's
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-242:  constraint. libbase is the right dependency.
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-243:- **V3 — oneshot + class core semantics:** `oneshot` = no restart on exit
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-244:  (`system/core/init/README.md:319`); `class core` services start at `class_start core` in
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-245:  `on boot` (init.rc:1232) — irrelevant to S3 since §3.1 uses an explicit `start`, but the
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-246:  `class core` line is harmless and conventional (SDV agents do the same).
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-247:- **V4 — S2 policy imposes no S3 conflict:** the one write is granted
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-248:  (`set_prop(phosphor_keygate, phosphor_safeboot_prop)`, conf:97638), the latch read is
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-249:  granted (conf:97651), the init transition is complete (conf:97597-97621), and keygate's
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-250:  neverallow set (conf:97666-97679) touches nothing the `.rc` path needs. **No new sepolicy
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-251:  is required for S3** (BUG #4 removes the last candidate).
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-252:- **V5 — A1's adb latch write path:** `set_prop(shell, phosphor_safeboot_latch_prop)` shipped
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-253:  in S2 (`packages/phosphor/sepolicy/private/app.te:12-14`) — the acceptance command works.
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-254:
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-255:## Required spec changes (summary for the supervisor)
+
+[Open with read_file line=N only to edit.]

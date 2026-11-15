@@ -1,0 +1,118 @@
+[11 matches in 7 files]
+docs/specs/P5-S3-PHASE-INSTRUCTIONS.md (4KB, 2 matches)
+  Line 1: # P5-S3 Phase Instructions — keygate boot-decision service (2026-11-14)
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-2:
+  Line 3: **Authority chain:** architecture §6.5/§2.2/§2.1/§8 → `docs/specs/P5-S3-keygate-service.md` **rev 2** (errata ⑬–⑯ applied, PM-approved) → preflight `docs/specs/P5-S3-PREFLIGHT-PROBE.md` → these instructions.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-4:
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-5:**Handoff discipline:** unchanged — Coder authors to `docs/handoffs/`, Supervisor transcribes, handoff file is the fidelity authority, payloads are pointers.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-6:
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-7:**Payload flow:** as S2 — commits to `/home/cptjaqx/projects/Phosphor-platform` (branch main), mirror refresh (`git --git-dir=/home/cptjaqx/projects/Phosphor-platform.git fetch /home/cptjaqx/projects/Phosphor-platform "+refs/heads/main:refs/heads/main"`), `repo sync packages/phosphor`. No direct tree edits.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-8:
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-9:**Standing rulings from the preflight (do not re-litigate):**
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-10:1. `.rc` verbatim is the erratum-⑬/⑭ form: `user/group system_ext_phosphor_keygate`, trigger `on load_persist_props_action`. (Unprefixed names fail `host_init_verifier`; late-init reads persist as absent.)
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-11:2. T1 (`ro.boot.phosphor.safeboot`) is `bootloader_prop` via the prefix row — readable by keygate with **zero** sepolicy changes. Do not add any property_contexts row or get_prop grant for it.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-12:3. Compound event+property triggers are banned on runtime grounds (action.cpp:225-228), not parse grounds. Never use them.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-13:4. Ordering: all `.rc` files parse before any action runs; the queue_property_triggers sweep re-checks after parse. A9 still requires the ≥5-boot empirical proof.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-14:5. A7's evidence MUST verify the staged `/system_ext/etc/passwd` contains `system_ext_phosphor_keygate::7520` (current out/ copy is a stale 0-byte S1 artifact) — before any device op.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-15:6. S3 needs **no new sepolicy at all** — S2's set is complete for this contract. If the plan wants a sepolicy change, that's a STOP-and-report.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-16:7. Comment cleanup carried: `phosphor_keygate.te:8-9`'s phantom `boot_prop`/C1 citation gets fixed (comment-only, same commit).
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-17:8. Decision-table implementation detail (spec §2.1 + §5): absent-as-empty vs unreadable MUST be distinguished by read errno for T1 (empty ⇒ contributes 0; error ⇒ 1). For T2, absent/empty/0 all ⇒ ignore (contribute 0); only literal `1` ⇒ safe. Unreadable T2 (errno) ⇒ 1.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-18:
+docs/specs/P5-S3-keygate-service.md (20KB, 2 matches)
+  Line 1: # P5-S3 — `phosphor_keygate`: the boot-decision service
+  docs/specs/P5-S3-keygate-service.md-2:
+  Line 3: **Phase:** 5 · **Spec ID:** P5-S3 · **Rev:** 2 (errata ⑬–⑯ 2026-11-14 PM-approved: rc user/group partition-prefixed; trigger → load_persist_props_action; compound-trigger ban re-reasoned; T1 readability closed — bootloader_prop prefix row, zero sepolicy) · **Owner:** Coder (builder) / Debugger (auditor)
+  docs/specs/P5-S3-keygate-service.md-4:**Status:** DRAFT — awaiting PM approval.
+  docs/specs/P5-S3-keygate-service.md-5:**Depends on:** **P5-S1** (module `phosphor-keygate`, `packages/phosphor/init/`, `/system/bin/phosphor-keygate`) and **P5-S2** (`phosphor_keygate` domain, `phosphor_keygate_exec`, `phosphor_safeboot_prop`, `phosphor_safeboot_latch_prop`, the subtraction-form property `neverallow`). Neither is optional: without S2 the service cannot write its one property, and without the latch type the adb trigger is unachievable (audit R-2).
+  docs/specs/P5-S3-keygate-service.md-6:**Blocks:** **P5-S4** (agentd's start condition *is* this service's output), and therefore S5–S7's normal-boot path. Also the *normal* half of S8's acceptance.
+  docs/specs/P5-S3-keygate-service.md-7:**Authority:** architecture §6.5 (safe boot, redesigned — BLOCKER-1 resolution), §2.2 (lifecycle), §2.1 (keygate row), §8's map + SELinux section; rev-4 findings **NEW-6** (the one-way property is a policy fact, not a value check) and **NEW-1** (polarity); `docs/P4-ARCH-AUDIT.md` residual **R-2**.
+  docs/specs/P5-S3-keygate-service.md-8:
+  docs/specs/P5-S3-keygate-service.md-9:---
+  docs/specs/P5-S3-keygate-service.md-10:
+  docs/specs/P5-S3-keygate-service.md-11:## 1. Scope
+  docs/specs/P5-S3-keygate-service.md-12:
+  docs/specs/P5-S3-keygate-service.md-13:One file of init config plus one small native binary that:
+  docs/specs/P5-S3-keygate-service.md-14:
+  docs/specs/P5-S3-keygate-service.md-15:1. Runs once, early, **`class core`, `oneshot`**, started `on late-init`.
+  docs/specs/P5-S3-keygate-service.md-16:2. Reads three trigger sources and folds them into a single decision.
+  docs/specs/P5-S3-keygate-service.md-17:3. Writes exactly one property, `sys.phosphor.safeboot`, as `0` (normal) or `1` (safe boot).
+  docs/specs/P5-S3-keygate-service.md-18:4. **Fails closed**: any indecision, any read error, any short-circuit ⇒ `1`.
+docs/specs/P5-S3-PREFLIGHT-PROBE.md (17KB, 2 matches)
+  Line 1: # P5-S3 PREFLIGHT PROBE — spec-vs-tree drift (Debugger, 2026-11-14)
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-2:
+  Line 3: **Scope:** read-only verification of P5-S3-keygate-service.md (rev 1) implicit claims against
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-4:`/home/cptjaqx/projects/grapheneos-2026091900` (payload `8adacb5`, S2 closed; repo `ba140ca`).
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-5:**Method:** adversarialDebugger.md sections applied to the *spec's assumptions*, not to code
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-6:(there is no S3 code yet — this is a pre-build spec audit). Compiled conf cited where stronger
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-7:than source: `out/soong/.intermediates/system/sepolicy/system_ext_sepolicy.conf/android_common/
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-8:akita/system_ext_sepolicy.conf`, sha `01738c13…` (the exact S2-verified artifact).
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-9:
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-10:**Verdict up front: the spec is NOT buildable as written.** Two CRITICAL drift findings —
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-11:the `.rc` user line cannot resolve (BUG #1) and the `on late-init` trigger reads `persist.*`
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-12:before it exists, inverting the decision table on every normal boot (BUG #2). The probe's own
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-13:T1 premise is refuted (BUG #4): **no** property_contexts row or get_prop grant is needed for
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-14:`ro.boot.phosphor.safeboot`. Bug numbers are probe-local (PF-BUG #N); the S2 audit's #1–#11
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-15:are a different series.
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-16:
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-17:---
+  docs/specs/P5-S3-PREFLIGHT-PROBE.md-18:
+docs/specs/P5-S5-shell-app.md (20KB, 1 matches)
+  docs/specs/P5-S5-shell-app.md-1:# P5-S5 — `PhosphorShell`: platform-signed HOME app (Phase 5 surface)
+  docs/specs/P5-S5-shell-app.md-2:
+  docs/specs/P5-S5-shell-app.md-3:**Phase:** 5 · **Spec ID:** P5-S5 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+  docs/specs/P5-S5-shell-app.md-4:**Status:** DRAFT — awaiting PM approval.
+  Line 5: **Depends on:** **P5-S1** (module `PhosphorShell`, `/system/priv-app/PhosphorShell/`, `product_packages.txt` entry), **P5-S2** (`phosphor_shell` domain, `seapp_contexts` entry, `get_prop(appdomain, phosphor_safeboot_prop)`, no read on the policy artifact), **P5-S3** (`sys.phosphor.safeboot` written fail-closed on every boot; S5's hand-off polarity is only *correct* if keygate writes it).
+  docs/specs/P5-S5-shell-app.md-6:**Blocks:** the visible half of **S8**'s exit checklist, and Phase 6 (which fills the rendering surface into this skeleton). Does not block S6/S7.
+  docs/specs/P5-S5-shell-app.md-7:**Authority:** architecture §1.1 (renderer choice + kiosk constraints + WebView hardening set), §1.2 ("Launcher3 installed, not default; default resolves to PhosphorShell **except in safe boot**"), §4 / §4.1 (subresource policy; §4.1 Layer 2 is a MUST and lives in this app), §6.5 ("Plain surface" bullet + NEW-1's polarity), §8's map (shell box: "safe-boot: starts stock launcher by component and finishes"; "no binder server; socket client"), §2.1 (shell holds **exactly one** capability permission [... line cut ...]
+  docs/specs/P5-S5-shell-app.md-8:
+  docs/specs/P5-S5-shell-app.md-9:---
+  docs/specs/P5-S5-shell-app.md-10:
+  docs/specs/P5-S5-shell-app.md-11:## 1. Scope
+  docs/specs/P5-S5-shell-app.md-12:
+  docs/specs/P5-S5-shell-app.md-13:Make Phosphor the device's **HOME** on a normal boot and **get out of the way** on a safe boot — the two halves of one mechanism (NEW-1), plus a hardened WebView whose subresource allow-list is real but whose *content* pipeline is a stub until Phase 6.
+  docs/specs/P5-S5-shell-app.md-14:
+  docs/specs/P5-S5-shell-app.md-15:Delivered in S5:
+  docs/specs/P5-S5-shell-app.md-16:
+  docs/specs/P5-S5-shell-app.md-17:1. `AndroidManifest.xml` with `HOME` + `DEFAULT` categories, platform-signed, privileged, `RECORD_AUDIO` **only**.
+  docs/specs/P5-S5-shell-app.md-18:2. `MainActivity` with the **fail-closed hand-off**: hand off to the stock launcher **unless `sys.phosphor.safeboot` definitively reads `0`**.
+  docs/specs/P5-S5-shell-app.md-19:3. WebView hardening exactly per §1.1/§4.1 Layer 2: `setAllowFileAccess(false)`, no universal access from file URLs, `JavaScriptEnabled(true)`, `setBlockNetworkLoads(true)`, and a `shouldInterceptRequest` that **denies every scheme except `data:`** with a synthetic empty response.
+  docs/specs/P5-S5-shell-app.md-20:4. The CSP injection into the screen document head (§4.1 Layer 2, shell-injected, never model-emitted).
+  docs/specs/P5-S5-shell-app.md-21:5. `addJavascriptInterface` exposing **only** `phosphorApi`, method-whitelisted, with every method returning `NOT_IMPLEMENTED` in S5.
+  docs/specs/P5-S5-shell-app.md-22:6. A **stub screen**: a single locally-assembled HTML document rendered through the same hardened path, showing boot state. No agent connection.
+  docs/specs/P5-S5-shell-app.md-23:7. The socket-client seam (§8: shell connects to agentd) — a named, non-functional stub in S5, implemented in S7.
+  docs/specs/P5-S5-shell-app.md-24:
+  docs/specs/P5-S5-shell-app.md-25:### Non-goals
+  docs/specs/P5-S5-shell-app.md-26:
+  docs/specs/P5-S5-shell-app.md-27:- **No rendering pipeline**: no agentd connection, no turn, no transcript, no TTS, no STT, no mic capture (the `RECORD_AUDIO` permission is *declared* — §2.1 fixes it — but not *used* in S5; a declared-but-unused dangerous permission is recorded, not silently granted at runtime).
+  docs/specs/P5-S5-shell-app.md-28:- No approval card (§6.2: broker-hosted, never in the page — S6).
+docs/specs/SPECS-AUDIT.md (30KB, 2 matches)
+  docs/specs/SPECS-AUDIT.md-9:## Verdict summary
+  docs/specs/SPECS-AUDIT.md-10:
+  docs/specs/SPECS-AUDIT.md-11:| Spec | Verdict | Blocking findings |
+  docs/specs/SPECS-AUDIT.md-12:|---|---|---|
+  docs/specs/SPECS-AUDIT.md-13:| P5-S1 build-integration | **FIX FIRST** | F1 (obsolete sepolicy variables → guaranteed build abort) |
+  docs/specs/SPECS-AUDIT.md-14:| P5-S2 selinux-foundation | **FIX FIRST** | F1-inherited, F2 (latch writer granted nowhere), F3 (wrong AID header path) |
+  Line 15: | P5-S3 keygate-service | **ACCEPT** | F7 (minor) |
+  docs/specs/SPECS-AUDIT.md-16:| P5-S4 agentd-skeleton | **ACCEPT** | F8 (minor) |
+  docs/specs/SPECS-AUDIT.md-17:| P5-S5 shell-app | **ACCEPT** | F9 (minor) |
+  docs/specs/SPECS-AUDIT.md-18:| P5-S6 broker-app | **FIX FIRST** | F4 (acceptance depends on an S7 deliverable) |
+  docs/specs/SPECS-AUDIT.md-19:| P5-S7 ipc-channels | **ACCEPT** | — |
+  docs/specs/SPECS-AUDIT.md-20:| P5-S8 diagnostics-exit | **FIX FIRST** | F5 (fifth-process contradiction unresolved) |
+  docs/specs/SPECS-AUDIT.md-21:
+  docs/specs/SPECS-AUDIT.md-185:---
+  docs/specs/SPECS-AUDIT.md-186:
+  docs/specs/SPECS-AUDIT.md-187:# Repair round — final narrow re-audit (rev 2 of this audit)
+  docs/specs/SPECS-AUDIT.md-188:
+  docs/specs/SPECS-AUDIT.md-189:**Re-audited:** the five changed specs — `P5-S1`, `P5-S2`, `P5-S6`, `P5-S7` (F4 wording), `P5-S8` (F5 wording).
+  Line 190: **Unchanged and verified byte-identical:** `P5-S3` (18394 B, 20:27:16), `P5-S4` (17880 B, 20:23:26), `P5-S5` (20871 B, 20:24:16) — the three ACCEPT specs were not touched, so nothing in them was weakened.
+  docs/specs/SPECS-AUDIT.md-191:**This audit file was not modified during the repair round** (still 21051 B, mtime 20:44:19), and R1–R3 were not re-litigated by Coder: S1 §5 A3 still asserts the count-of-5 that R2 vindicated, S3:149 still carries the `absent`-vs-`stopped` discriminator that R1 vindicated, and S2:152 still carries the `phosphor_agentd_data_file:file *` neverallow that R3 found unobjectionable.
+  docs/specs/SPECS-AUDIT.md-192:
+  docs/specs/SPECS-AUDIT.md-193:**Verdict: CONFIRMED — all eight specs ACCEPT. The Phase 5 spec set is approved and implementation may proceed on PM delegation.**
+  docs/specs/SPECS-AUDIT.md-194:
+  docs/specs/SPECS-AUDIT.md-195:## F1 — CLOSED
+docs/specs/P5-S2-selinux-foundation.md (30KB, 1 matches)
+  Line 6: **Blocks:** **P5-S3, P5-S4, P5-S5, P5-S6, P5-S7** — every one of them needs its domain, its property access, or its file type from this spec. S8 depends on S2 transitively.
+docs/specs/P5-S4-agentd-skeleton.md (17KB, 1 matches)
+  Line 5: **Depends on:** **P5-S1** (module `phosphor-agentd`), **P5-S2** (`phosphor_agentd` domain, `phosphor_agentd_exec`, `phosphor_agentd_data_file`, `phosphor_risk_policy_file` read grant, the binder-target `neverallow`), **P5-S3** (`sys.phosphor.safeboot` must exist and be written, or the start condition never fires).
+
+[Open with read_file line=N only to edit.]

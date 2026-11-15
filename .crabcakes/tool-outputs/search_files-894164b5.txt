@@ -1,0 +1,67 @@
+[4 matches in 3 files]
+docs/handoffs/P5-S3-KEYGATE-PLAN.md (50KB, 1 matches)
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-11:
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-12:## DISCOVERY (steel-framed rule 1)
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-13:
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-14:- **Read `docs/specs/P5-S3-keygate-service.md` (rev 2) in full:** the decision table §2.1 (any `1` wins; only an all-`0` read yields `0`; any read error / unparseable value / indecision ⇒ `1`); T1 `ro.boot.phosphor.safeboot` (unreadable ⇒ 1), T2 `persist.phosphor.safeboot` (set-only latch; `0` ignored, `1` latches — asymmetry must be commented in source), T3 chord (stub ⇒ never `t3`); exactly one property write `sys.phosphor.safeboot`; one structured log line `phosphor-keygate: safeboot=<0|1> re [... line cut ...]
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-15:- **Read `docs/specs/P5-S3-PREFLIGHT-PROBE.md` in full:** BUG #1 (unprefixed AID fails `host_init_verifier`; real precedent `user system_ext_sdv_sbr`), BUG #2 (`late-init` precedes `load_persist_props` ⇒ trigger must be `load_persist_props_action`), BUG #3 (compound-trigger ban is runtime grounds, action.cpp:225-228), BUG #4 (T1 is `bootloader_prop` via the `ro.boot.` prefix row `property_contexts:1088` + `get_prop(domain, bootloader_prop)` at `domain.te:519` — **zero sepolicy needed**), BUG #5  [... line cut ...]
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-16:- **Read `docs/specs/P5-S3-PHASE-INSTRUCTIONS.md` in full:** the 8 standing rulings (binding, not re-litigated) and the build-side scope list; verification list (`m -j24 phosphor-keygate`; staged `.rc` path; staged passwd 7520 row; `host_init_verifier`; `strings`/`nm` static checks).
+  Line 17: - **Read S1/S2 handoffs** (`P5-S1-PHASE-1b-PLAN.md`, `P5-S1-PHASE-1c-EVIDENCE.md`, `P5-S2-POLICY-PLAN.md`, `P5-S2-PHASE-S2B-EVIDENCE.md`): handoff-file format; payload flow (SRCREPO commit → bare-mirror refresh → `repo sync packages/phosphor`; the repo root **is** `packages/phosphor` — do not nest, S2 deviation 1); S1 skeleton facts (`services/PhosphorKeygate/{Android.bp,main.cpp}` exist as `cc_binary` stubs, `stem:` = module name, stub `main(){return 0;}`, **no `init_rc` anywhere yet**, `init/` [... omitted end of long line]
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-18:- **Fetched in-tree `cc_binary`+`init_rc` precedents [EXECUTED — remote source]** (aosp-mirror `platform_system_core`, `raw.githubusercontent.com`, fetched 2026-11-14):
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-19:  - `system/core/gatekeeperd/Android.bp`: `cc_binary { name: "gatekeeperd", ..., srcs: ["main.cpp"], init_rc: ["gatekeeperd.rc"] }` — and `gatekeeperd.rc` sits **beside the `Android.bp`** (module-local). Fetched: `https://raw.githubusercontent.com/aosp-mirror/platform_system_core/master/gatekeeperd/Android.bp` and `.../gatekeeperd/gatekeeperd.rc`.
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-20:  - `system/core/watchdogd/Android.bp`: plain `cc_binary`, no `init_rc` (fetched, same host).
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-21:  - `system/trusty/keymaster/Android.bp`: `init_rc: ["3.0/android.hardware.keymaster@3.0-service.trusty.rc"]` — relative paths resolve **inside** the module directory (subdirectory form). Fetched: `https://raw.githubusercontent.com/aosp-mirror/platform_system_core/master/trusty/keymaster/Android.bp`.
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-22:  - **Conclusion (the instruction's verify item):** `init_rc` entries are module-relative and every in-tree precedent keeps the `.rc` inside the module's directory tree. There is **no precedent for a `../` parent escape** in `init_rc`, so the `.rc` is placed **beside the module**: `services/PhosphorKeygate/phosphor_keygate.rc`, referenced as `init_rc: ["phosphor_keygate.rc"]`. Tree-side re-verification is a §8 step.
+  docs/handoffs/P5-S3-KEYGATE-PLAN.md-23:- **Architecture:** `packages/phosphor` is the payload repo; keygate owns `services/PhosphorKeygate/`; the `.rc` reaches init via the module's `init_rc` (→ `/system/etc/init/`, scanned at `init.cpp:353`); sepolicy is **untouched** except the comment-only `.te` fix.
+docs/handoffs/P5-S1-PHASE-1b-PLAN.md (95KB, 2 matches)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-680:wc -l .repo/manifest-pinned.xml
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-681:grep -n 'path="packages/phosphor"' .repo/manifest-pinned.xml
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-682:echo '== A6b: post-mv pin still exactly one 40-hex line =='
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-683:echo "FINAL_LINES=$(grep -c 'path="packages/phosphor"' .repo/manifest-pinned.xml)"
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-684:grep 'path="packages/phosphor"' .repo/manifest-pinned.xml | grep -o 'revision="[0-9a-f]\{40\}"'   # R5-3: scoped — the unscoped form emits ToXml's FIRST project revision, not ours (1057 40-hex revisions live in this file)
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-685:echo '== A7: PLAN LINT ONLY (this file, not the session) =='
+  Line 686: grep -cE '^[[:space:]]*(adb|fastboot)[[:space:]]' /home/cptjaqx/projects/Phosphor/docs/handoffs/P5-S1-PHASE-1b-PLAN.md
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-687:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-688:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-689:EXPECTED summary (each item is a pass condition, in output order):
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-690:`1` · `refs/heads/main → acba3945152acbb2a70d142e6ad4c535ed245c23` · `vendor/adevtool` only with 5 entries · `1 file changed, 1 insertion(+)` · one-insertion diff with hunk `@@ -6,3 +6,4 @@` · `acba3945152acbb2a70d142e6ad4c535ed245c23` · `0` · `PHOSPHOR_LINE_COUNT=0 GREP_STATUS=1` · `S8_FILES=4739` · `INVENTORY=IDENTICAL` · `LAST_LINE=Generated vendor module at vendor/google_devices/akita` (executed equality, rev 4 R4-1) · `1087` (N+2) · the pin line (project, 40-hex revision, `groups="local::ph [... line cut ...]
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-691:
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-692:FAILED: any item off → STOP with that line's output. Phase 1c must not start until this block passes and the Debugger's audit is clean (instructions L59: "after 1a audit is clean" — the same gate applies to 1b → 1c).
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-764:- [x] NEW-4 (MEDIUM) — S6.1's "already loaded" branch removed (the script has none) and replaced with the script's real output shape; profile pre-existence recorded for A6a. Executed proof: `read_file scripts/host-fix-nsjail-userns.sh` L49-105 → `==> Writing …`, `==> Loading the profile`, `==> Verification`, `1`, `still blocked (correct: …)`, `nsjail works now`, `==> Done.`; `grep -n "already" scripts/host-fix-nsjail-userns.sh` → no match. Evidence in plan: lines 418-434.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-765:- [x] NEW-5 (MEDIUM) — `$GALOG` freshness gate added (`rm -f` before, `test -s` after, mtime ≥ GALOG_TS), and a missing/empty/stale log is a hard stop. Executed proof: the S6.2 block at lines 440-456 is the gate; `test -s` + `stat -c %Y` are the assertions. Evidence in plan: lines 442-444 (`rm -f`, `GALOG_TS`, `/tmp/adevtool-galog.ts`), 451-456 (gate), 469 (FAILED "log missing/empty/stale").
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-766:- [x] Carry-along 1 — `xargs sha256sum` status asserted (S6.0 `SHA256_STATUS`; S6.3 `AX`/`SHA256_STATUS`) and before-count == after-count made an explicit pass condition. Evidence: lines 382-383, 481-485, 530.
+  Line 767: - [x] Carry-along 2 — S8's summary and Part A echo the corrected string; no stale `Generating mk for akita` remains. Executed proof: `search_files 'Generating mk for akita' docs/handoffs/P5-S1-PHASE-1b-PLAN.md` → 0 matches. Evidence: lines 646, 689.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-768:- [x] Carry-along 3 — FAILED-note added that a content-and-mtime restore defeats all three legs; the differential is not an anti-tamper proof. Evidence: line 535.
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-769:```
+  docs/handoffs/P5-S1-PHASE-1b-PLAN.md-770:
+docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md (6KB, 1 matches)
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-1:# P5-S1 Phase 1b — Execution evidence bundle & completion note
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-2:
+  Line 3: **Executed:** 2026-11-12, by the Supervisor, from plan `docs/handoffs/P5-S1-PHASE-1b-PLAN.md` rev 6 (Debugger round-4 verdict: EXECUTABLE AS WRITTEN).
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-4:**Tree:** `/home/cptjaqx/projects/grapheneos-2026091900` · **Payload:** `packages/phosphor` @ `acba3945152acbb2a70d142e6ad4c535ed245c23`
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-5:**Device operations: NONE** (A7). No adb, no fastboot, no flash, no wipe, no reboot.
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-6:
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-7:## Step-by-step results (all pass conditions met)
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-8:
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-9:| Step | Command(s) | Result | Expected | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-10:|---|---|---|---|---|
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-11:| S0.1 | git rev-parse/status (Phosphor-platform) | `main`, `acba394…5c23`, porcelain 0 | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-12:| S0.2 | ls mirror | absent | absent | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-13:| S0.3 | ls local_manifests; grep manifests | absent; 0 | absent; 0 | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-14:| S0.4 | wc -l device.mk; grep -c; git status | 8; 0; clean | 8; 0; clean | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-15:| S0.5 | pin lines; repo status; du | 1085; adevtool 4-entry baseline; 109G | N=1085; baseline; ~107-109G | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-16:| S1 | git clone --bare + verify | bare=true, `refs/heads/main`, `acba394…5c23` | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-17:| S2 | heredoc phosphor.xml + xml parse | 3 lines exact; `XML OK` | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-18:| S3.1 | repo manifest \| grep -c | `1` + one project line (`groups="local::phosphor"` added by repo) | 1 | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-19:| S3.2 | ls-remote mirror / literal-B6 | mirror: `acba394` HEAD+main; literal: `fatal: … does not appear to be a git repository` | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-20:| S4.1 | repo sync -n | `repo sync has finished successfully.`, 0 error lines (ran under nohup, 2 poll cycles) | exit 0, no errors | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-21:| S4.2 | repo sync -j24 packages/phosphor | finished successfully; HEAD=`acba394…`, porcelain 0, full B2 layout present | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-22:| S4.3 | repo status -j24 | baseline dirt only (adevtool 4 entries) | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-23:| S5 | printf append + diff | `wc -l` 9; `1 file changed, 1 insertion(+)`; hunk `@@ -6,3 +6,4 @@`; 0 `-` lines | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-24:| S6.0 | inventory | `BEFORE_FILES=4739`, `OLD_PRESERVED_COUNT=3`, `MTIME_SNAPSHOT=4739`, `SHA256_STATUS=0` | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-25:| S6.1 | sudo gate → PM ran interactively | profile written+loaded; sysctl=1; unshare blocked; **probe red herring** (see deviations) | script shape | ✓* |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-26:| S6.1 gate | corrected R5-2 discriminator | `DISCRIM_GREP=1`, `NSJAIL_DISCRIMINATOR=PASS`; sole DENIED = `comm="unshare"` (the script's own intended check) | PASS | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-27:| S6.2 | generate-all -d akita | `EXIT=0`; log fresh (`GALOG_MTIME=1794499802 ≥ GALOG_TS=1794499796`); `LAST_LINE=Generated vendor module at vendor/google_devices/akita` | same | ✓ |
+  docs/handoffs/P5-S1-PHASE-1b-EVIDENCE.md-28:| S6.3 (a) | sha256 differential | `AFTER_FILES=4739`, `INVENTORY=IDENTICAL` | same | ✓ |
+
+[Open with read_file line=N only to edit.]

@@ -1,0 +1,109 @@
+[line 174 of docs/PROJECT-STATUS.md]
+174|### Phase 3 — Signing, flashing, recovery — done, verified
+175|Key generation → signing wrapper (`scripts/keys-sign-release.sh`) → release pipeline → unlock → flash → cryptographic verification → deliberate recovery reflash. Every destructive step was approved explicitly, for that operation, at the time. Detail: `docs/PHASE-3-FLASHING-AND-RECOVERY.md` (§9 = status and open items) and `docs/PHASE-3-KEY-MANAGEMENT-DESIGN.md`.
+176|
+177|Key generation follows GrapheneOS's documented procedure: `mkdir -p keys/<device> && cd keys/<device>`, then `../../development/tools/make_key <name> "/CN=.../"` for each of the nine, then `openssl genrsa 4096 | openssl pkcs8 -topk8 -scrypt -out avb.pem`, then `../../external/avb/avbtool.py extract_public_key --key avb.pem --output avb_pkmd.bin`.
+178|
+179|Release pipeline: Phase 2's `target_files.zip` is **not flashable**. `m otatools-package` → `script/finalize.sh` → `script/generate-release.sh akita <BUILD_NUMBER>` → output in `releases/<BUILD_NUMBER>/release-akita-<BUILD_NUMBER>/`. For fast iteration the raw images in `out/target/product/akita/` can be flashed directly with `fastboot flash <partition> <img>` — faster, but it skips the signing path, so it is not the production shape.
+180|
+181|---
+182|
+183|## 7. The build-plan map (what follows)
+184|
+185|| Phase | Name | Primary result |
+186||---|---|---|
+187|| 0–3 | Definition; host; source/build; signing/flashing/recovery | **DONE** |
+188|| 4 | Phosphor platform architecture | Detailed system design and capability boundaries |
+189|| 5 | Native Phosphor system foundation | Bootable platform components + trusted agent service foundation |
+190|| 6 | Phosphor system shell and rendering surface | Primary agent-controlled phone interface |
+191|| 7 | Voice, STT, conversational loop | Reliable speech-first interaction |
+192|| 8 | Agent capability and policy framework | Native action orchestration with explicit safety policy |
+193|| 9 | Communications integration | Calls, contacts, SMS/messages, notifications, escalation |
+194|| 10 | Settings, applications, hardware integration | Unified control of device functions |
+195|| 11 | Persistence, identity, data, recovery | Durable state, privacy, backup, recovery |
+196|| 12 | Security hardening and adversarial testing | Secure, understandable, resilient platform |
+197|| 13 | Performance, reliability, real-device validation | Daily-usable system on the Pixel |
+198|| 14 | Update, release, long-term maintenance | Sustainable distribution and servicing |
+199|| 15 | Pilot deployment and iterative expansion | Controlled real-world use and evolution |
+200|
+201|Phases are ordered, but some later design work can proceed in parallel once dependencies are understood. The vision's own post-milestone order is the same shape: shell → agent service as a platform component → voice/text → contacts and calls → notification/message awareness → policy-approved replies → settings/connectivity → audio, sensors, camera, NFC → absorbing more system apps → hardening, update, rollback.
+202|
+203|### Live specs that constrain the design
+204|
+205|- **`docs/PHOS-SPEC-001-trust-architecture.md`** — trust architecture and interactive-UI security: generated-screen JS rules (R-UI), untrusted-content quarantine (R-QUAR), destructive-action gating (R-GATE), secret hygiene (R-SEC), bridge/hardware access (R-BRIDGE), latency (R-PERF), the command risk policy classes, and the approval flow. Its requirements are front-end-agnostic and carry over to the Android build.
+206|- **`docs/PHOS-SPEC-002-system-integration.md`** — defines the four jobs of an OS and five **integration levels** (L1 kernel policy, L2 hardware arbitration, L3 system configuration, L4 Phosphor owns boot), plus the security/recovery requirements that separate an operating system from a demo, hardware prerequisites, and open questions for the Captain. Phase 4 must answer inside this frame.
+207|
+208|---
+209|
+210|## 8. Operational procedures
+211|
+212|### Flash / reflash (production shape)
+213|
+214|```bash
+215|sudo systemctl stop fwupd.service        # every session; fwupd claims fastboot devices
+216|# hold VOLUME DOWN while booting to enter the bootloader
+217|unzip <release>.zip && cd <dir> && bash flash-all.sh
+218|# if the flash fails on space, /tmp is tmpfs and too small:
+219|mkdir tmp && TMPDIR="$PWD/tmp" ./flash-all.sh
+220|```
+221|
+222|`bsdtar` is the guide's extraction command but `libarchive-tools` is not installed on qoder; `unzip` is what actually runs, and the script is invoked as `bash flash-all.sh` so the executable bit is irrelevant.
+223|
+224|**`flash-all.sh` WIPES USERDATA AND METADATA** — it is a data-loss recovery, not a repair. It also does `fastboot erase avb_custom_key` then flashes our `avb_pkmd.bin` (that is what lets the bootloader verify our images while unlocked), and hardcodes `--set-active=a` (which is why a flashed device always reports `ro.boot.slot_suffix=_a`). Plant a marker file in `/sdcard` before a reflash test if you need to distinguish "recovered" from "recovered and wiped".
+225|
+226|**Rehearse the USB transitions before any flash** — a bad port aborts a flash mid-sequence, because `flash-all.sh` runs `fastboot reboot-bootloader` *between* flashing the bootloader to the other slot and flashing the OS:
+227|
+228|```bash
+229|adb reboot bootloader; fastboot reboot-bootloader; fastboot devices; fastboot reboot; adb devices
+230|```
+231|
+232|Observed on qoder: from one port `adb reboot bootloader` worked every time, but the device never came back after `fastboot reboot` (2/2 attempts, absent from `lsusb` entirely — so not an adb or authorization problem), and replugging into the *same* port did not fix it; a different port gave clean passes on all three transitions. Diagnose with `lsusb -d 18d1:` plus per-port emptiness under `/sys/bus/usb/devices`; change port first, then cable. The rehearsal touches no partition and is the cheap way to prove the path before committing.
+233|
+234|### Recovery ladder
+235|
+236|fastboot is the normal failure mode and it is recoverable — the unlocked bootloader is what makes a bad build survivable. The dependable floor (rung 2) is reflashing an official verified GrapheneOS factory image:
+237|
+238|```bash
+239|ssh-keygen -Y verify -f allowed_signers -I contact@grapheneos.org -n "factory images" -s <zip>.sig < <zip>
+240|```
+241|
+242|It needs none of our keys or artifacts. **Never relock the bootloader while troubleshooting:** `fastboot flashing lock` on a device with a non-booting or wrongly-signed build can make it unbootable.
+243|
+244|### Verifying a flashed device (do not trust "it boots")
+245|
+246|An unlocked bootloader does not enforce verification, so a device that boots says nothing about signing. The check that settles it: compare the bootloader's `ro.boot.vbmeta.digest` against `sha256()` of the first `ro.boot.vbmeta.size` bytes of the `vbmeta.img` that was flashed. Supporting signals: fingerprint ending `:user/release-keys` (an unsigned build says `:user/test-keys`), and a platform-signed app such as `com.android.settings` carrying our platform cert.
+247|
+248|---
+249|
+250|## 9. Traps and hard-won lessons
+251|
+252|Each of these cost real time. Read before touching the build or the device.
+253|
+254|**Platform / build**
+255|
+256|- **nsjail vs Ubuntu's userns restriction.** `kernel.apparmor_restrict_unprivileged_userns=1` makes AOSP's build-sandbox probe fail, so soong prints `Build sandboxing disabled due to nsjail error.` on stderr and continues with the sandbox off — **the build itself still succeeds**. But **adevtool's `spawnAsync` treats any unexpected stderr line as fatal** and aborts `generate-all` on exactly that line. There is no knob to silence it (`USE_NINJA_SANDBOX` does not exist in the tree; `build/soong/ui/build/sandbox_linux.go` probes unconditionally). Fix: grant `userns` to the nsjail binaries via AppArmor (`scripts/host-fix-nsjail-userns.sh` writes `/etc/apparmor.d/nsjail-userns`), following the pattern Ubuntu ships for `mmdebstrap` — preferable to setting the sysctl to 0, which would drop the restriction host-wide. The profile attaches to an **absolute path inside the tree**, so re-run the script if the tree moves or is recreated.
+257|- **Never hand-test the probe to judge that fix.** A bare `nsjail -H android-build -e -u nobody -g nogroup --disable_clone_newcgroup -- /bin/bash -c ...` fails with `execve('/bin/bash') failed: No such file or directory` *even when the fix works*, because it omits the bind mounts AOSP passes. Judge by re-running the real build, or with `journalctl -k | grep -i apparmor` — no `unprivileged_userns` transition and no `DENIED` line after the profile loads means it worked.
+258|- **GrapheneOS apps are named by *module*, not package.** The browser stages as `product/app/TrichromeChrome/TrichromeChrome.apk` and *is* `app.vanadium.browser` (also `TrichromeWebView.apk` = `app.vanadium.webview`, `TrichromeLibrary.apk`, `VanadiumConfig.apk`). Searching the output for `app.vanadium.*` finds nothing and looks like a catastrophic miss. Confirm with `out/host/linux-x86/bin/aapt2 dump badging <apk>`.
+259|- `GmsCompatLib.apk` in `system/app` is **GrapheneOS's own** GMS-compat library (added by their `build` fork), not Google GMS. The real de-Google check is `com.google.android.gms` / `com.android.vending` — both should count 0.
+260|- Judge completeness against `out/target/product/akita/product_packages.txt`. `grep -c 'error:'` on the build log is useless — it matches the Rust crate `thiserror`. Grep `ninja: build stopped` or `FAILED:`.
+261|- **`apksigner` needs a JDK on PATH**, and pick the linux-x86 one: the tree's `out/host/linux-x86/bin/apksigner` is a wrapper that execs `java`; without it you get a bare `exec: java: not found` (exit 127). Use `prebuilts/jdk/jdk25/linux-x86/bin/java` — **not** a bare `find` for `java`, which happily returns the `linux-arm64` build and fails with `Exec format error` (exit 126). There is no JVM in `/usr/lib/jvm` on qoder.
+262|
+263|**Keys, tokens, and the token device**
+264|
+265|- **`make_key` ALWAYS exits 1 — even on complete success.** Its trap is `trap 'rm -rf ${tmpdir}; echo; exit 1' EXIT INT QUIT`, and `exit 1` in an EXIT trap sets the status on every run. Call it with `|| true` and verify the artifacts (`[[ -s $key.pk8 && -s $key.x509.pem ]]`) instead of trusting the status. It reads its password from stdin (a blank line = unencrypted) and refuses to overwrite existing keys.
+266|- **`encrypt-keys` must be driven by piping.** Unlike `decrypt-keys` it has no `${var+defined}` env shortcut: it `read -s`s old, new and confirm from stdin, so use `printf '\n%s\n%s\n' "$NEW" "$NEW" | script/encrypt-keys <keysdir>` (blank first line = nothing encrypted yet). It encrypts the `.pk8` files **and `avb.pem`** in one pass, which is why generating everything unencrypted and encrypting once is the clean order.
+267|- **Two certificate-subject formats — use the right one per tool.** `ykman piv certificates generate -s` wants an **RFC 4514** string (`CN=Phosphor,O=Phosphor`), while `development/tools/make_key <name> <subject>` feeds `openssl req -subj` and wants OpenSSL's **`/CN=x/O=y`** form. Passing the OpenSSL form to ykman makes `cryptography` raise a `ValueError` with an **empty message**, surfaced as a bare unexplained ykman error — it fails *before* prompting, so no PIN attempt is consumed, which is the tell.
+268|- **RSA-OAEP parameters must match on both sides.** Encrypt with `openssl pkeyutl -encrypt -pubin -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256` and decrypt with `pkcs11-tool --decrypt --mechanism RSA-PKCS-OAEP --hash-algorithm SHA256 --mgf MGF1-SHA256`. OpenSSL defaulting to SHA-1 on one side while the other expects SHA-256 is the classic silent failure.
+269|- **Never paste a multi-line block around an interactive PIN prompt.** Pasted text still sitting in the tty buffer can be swallowed as the PIN and rejected (`CKR_PIN_INCORRECT`), and a rejected PIN decrements a counter that does not refill: **3 wrong PINs lock the PIV PIN** (unblock via `ykman piv access unblock-pin`; 3 wrong PUKs lock that too). Run PIN-gated commands as a single typed line, check `ykman piv info | grep 'PIN tries'` before any retry, and keep a test blob pre-sealed so the user types exactly one command. Make the test cheap: sealing needs only the public key and no PIN.
+270|- **`pkcs11-tool`'s PIN prompt needs BOTH stdin and stdout to be a terminal.** OpenSC's `util_getpass` calls `tcgetattr(fileno(stdout))` then reads with `getchar()` from stdin, so a *redirected stdout* breaks it exactly as a captured stdin does — both give the opaque `error: util_getpass error`, with the prompt line never appearing. It fails *before* `C_Login`, so no PIN try is consumed. Fix: give the prompt a terminal on both fds (`</dev/tty >/dev/tty`). Never `$(...)`, never `| cmd`, never `> /dev/null`. `util_get_pin` accepts `env:VAR` but explicitly rejects `file:`, so there is no PIN-from-file option.
+271|- **YubiKey CCID access trap (cost a real debugging cycle).** Installing the smartcard tooling while the token is already plugged in leaves the device node at `root:root`, because udev applies `/usr/lib/udev/rules.d/92-libccid.rules` (`GROUP="pcscd"`) only when a device *appears*. Symptom: `ccid_usb.c ... LIBUSB_ERROR_ACCESS`, `ykman piv info` → "Failed to connect to YubiKey", `opensc-tool --list-readers` → "No smart card readers found" — while the *seat user* keeps working over the HID path (`ykman info` succeeds), because `69-yubikey.rules` tags the device `uaccess`. Fix: `udevadm control --reload-rules && udevadm trigger --subsystem-match=usb --action=add`, then physically replug if the group is still wrong (`scripts/host-fix-yubikey-ccid.sh`). Never run `pcsc_scan` without a bound — `pcsc_scan -n` does not exit and will hang the command until timeout.
+272|- **Verify a generated set by artifact, not by message.** Every `.pk8` must reject a wrong passphrase; `openssl asn1parse` should show `PBES2`; certs should be RSA-4096 and all distinct; `avb_pkmd.bin` is exactly `8 + 2*(bits/8)` bytes (1032 for RSA-4096) with `n0inv == 2^32 - modinv(N, 2^32)` and `rr == (2^bits)^2 mod N` — and note there is **no trailing hash** in that format. The definitive end-to-end check: unseal with the token, confirm it equals the escrow copy, decrypt a `.pk8` with it, and `openssl rsa -pubout` the result to confirm it matches that key's `.x509.pem`.
+273|- **Do not test "is this PKCS#8 encrypted?" with a wrong passphrase.** `openssl pkcs8 -inform DER -in k.pk8 -passin pass:wrong` exits **non-zero for an unencrypted key too** (verified empirically), so it cannot distinguish them and silently passes plaintext keys. Test the DER structure: an `EncryptedPrivateKeyInfo` is `SEQUENCE { SEQUENCE(algid), OCTET STRING }` while a plaintext `PrivateKeyInfo` is `SEQUENCE { INTEGER version, … }`, so line 2 of `openssl asn1parse -inform DER -in k.pk8` contains `prim: INTEGER` only for the plaintext case. (`-nocrypt` is not the answer either — it is a `-topk8` output flag.)
+274|- **YubiKey provisioning creates files outside the source tree:** `~/phosphor-keys/` (`yubikey.conf`, `piv-wrap-pub.pem`, `.seal-tested`). The `.seal-tested` marker is a deliberate interlock — `keys-generate.sh` refuses to generate the permanent key set until the seal/unseal round trip is proven, so a passphrase is never left unprotected between generation and sealing. `ykman piv info` reports `Using default PIN!/PUK!/Management key!`: the PIN gates unsealing and **must** be changed off `123456`; the management key only authorises key management and cannot decrypt, so leaving it default is defensible (worst case is DoS via overwriting the wrap key).
+275|
+276|**Storage / device handling**
+277|
+278|- **Never use `blkid -L <label>` to test whether a drive is attached.** Its cache survives unplugging: it reported `/dev/sda1` for `PHOSPHOR-ESCROW` while the USB was physically disconnected, which would have sent key material to a stale device path. Read live sysfs: `lsblk -rno NAME,LABEL | awk -v L="$LABEL" '$2==L {print "/dev/"$1; exit}'`, then confirm with `-b "$dev"`.
+279|- **`lsblk` reports `RM` (removable) and `TRAN` (transport) on the DISK, not the partition.** Asking on `/dev/sda1` silently yields empty strings, so a `[[ $tran == usb ]]` guard fails with `TRAN=` and looks like the wrong drive when it is fine. Resolve the parent first: `disk=/dev/$(lsblk -no PKNAME "$dev" | head -1)`.
+280|- **A newly `mkfs`'d ext4 USB is `root:root 755` at its root, so the normal user cannot write to it** — the write fails as a bare `mkdir: Permission denied` long after the interesting work is done. `mkfs.ext4` cr
+[... truncated; line window cut after 16384 bytes; continue with line=280 ...]

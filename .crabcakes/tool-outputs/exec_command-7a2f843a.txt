@@ -1,0 +1,295 @@
+### service.cpp crash_count / restart machinery
+192:      crash_count_(0),
+219:        uint64_t start_ns = time_started_.time_since_epoch().count();
+362:    const bool is_process_updatable = use_default_mount_ns && is_apex_updatable;
+398:    if (((flags_ & SVC_CRITICAL) || is_process_updatable) && !(flags_ & SVC_RESTART) &&
+402:            if (++crash_count_ > 4) {
+407:                if (flags_ & SVC_CRITICAL) {
+435:            crash_count_ = 1;
+652:                                                                      time_started_);
+764:    time_started_ = boot_clock::now();
+930:    time_started_ = boot_clock::now();  // not accurate, but doesn't matter here
+### service.cpp 340-470
+    start_order_ = 0;
+    was_last_exit_ok_ = siginfo.si_code == CLD_EXITED && siginfo.si_status == 0;
+
+    // Oneshot processes go into the disabled state on exit,
+    // except when manually restarted.
+    if ((flags_ & SVC_ONESHOT) && !(flags_ & SVC_RESTART) && !(flags_ & SVC_RESET)) {
+        flags_ |= SVC_DISABLED;
+    }
+
+    // Disabled and reset processes do not get restarted automatically.
+    if (flags_ & (SVC_DISABLED | SVC_RESET))  {
+        NotifyStateChange("stopped");
+        return;
+    }
+
+#if INIT_FULL_SOURCES
+    static bool is_apex_updatable = true;
+#else
+    static bool is_apex_updatable = false;
+#endif
+    const bool use_default_mount_ns =
+            mount_namespace_.has_value() && *mount_namespace_ == NS_DEFAULT;
+    const bool is_process_updatable = use_default_mount_ns && is_apex_updatable;
+
+#if defined(__BIONIC__) && defined(SEGV_MTEAERR)
+    // As a precaution, we only upgrade a service once per reboot, to limit
+    // the potential impact.
+    //
+    // BIONIC_SIGNAL_ART_PROFILER is a magic value used by deuggerd to signal
+    // that the process crashed with SIGSEGV and SEGV_MTEAERR. This signal will
+    // never be seen otherwise in a crash, because it always gets handled by the
+    // profiling signal handlers in bionic. See also
+    // debuggerd/handler/debuggerd_handler.cpp.
+    bool should_upgrade_mte = siginfo.si_code != CLD_EXITED &&
+                              siginfo.si_status == BIONIC_SIGNAL_ART_PROFILER && !upgraded_mte_;
+
+    if (should_upgrade_mte) {
+        constexpr int kDefaultUpgradeSecs = 60;
+        int secs = GetIntProperty("persist.device_config.memory_safety_native.upgrade_secs.default",
+                                  kDefaultUpgradeSecs);
+        secs = GetIntProperty(
+                "persist.device_config.memory_safety_native.upgrade_secs.service." + name_, secs);
+        if (secs > 0) {
+            LOG(INFO) << "Upgrading service " << name_ << " to sync MTE for " << secs << " seconds";
+            once_environment_vars_.emplace_back("BIONIC_MEMTAG_UPGRADE_SECS", std::to_string(secs));
+            upgraded_mte_ = true;
+        } else {
+            LOG(INFO) << "Not upgrading service " << name_ << " to sync MTE due to device config";
+        }
+    }
+#endif
+
+    // If we crash > 4 times in 'fatal_crash_window_' minutes or before boot_completed,
+    // reboot into bootloader or set crashing property
+    boot_clock::time_point now = boot_clock::now();
+    constexpr const char native_watchdog_reboot_time[] = "persist.init.svc.last_fatal_reboot_epoch";
+    uint64_t throttle_window =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::hours(24)).count();
+    if (((flags_ & SVC_CRITICAL) || is_process_updatable) && !(flags_ & SVC_RESTART) &&
+        !was_last_exit_ok_) {
+        bool boot_completed = GetBoolProperty("sys.boot_completed", false);
+        if (now < time_crashed_ + fatal_crash_window_ || !boot_completed) {
+            if (++crash_count_ > 4) {
+                auto exit_reason =
+                        boot_completed
+                                ? "in " + std::to_string(fatal_crash_window_.count()) + " minutes"
+                                : "before boot completed";
+                if (flags_ & SVC_CRITICAL) {
+                    if (!GetBoolProperty("init.svc_debug.no_fatal." + name_, false)) {
+                        uint64_t epoch_time =
+                                std::chrono::duration_cast<std::chrono::seconds>(
+                                        std::chrono::system_clock::now().time_since_epoch())
+                                        .count();
+                        // Do not reboot again If it was already initiated in the last 24hrs
+                        if (epoch_time - GetIntProperty(native_watchdog_reboot_time, 0) >
+                            throttle_window) {
+                            SetProperty(native_watchdog_reboot_time, std::to_string(epoch_time));
+                            // Aborts into `fatal_reboot_target_'.
+                            SetFatalRebootTarget(fatal_reboot_target_);
+                            LOG(FATAL) << "critical process '" << name_ << "' exited 4 times "
+                                       << exit_reason;
+                        } else {
+                            LOG(INFO) << "Reboot already performed in last 24hrs because of crash.";
+                        }
+                    }
+                } else {
+                    LOG(ERROR) << "process with updatable components '" << name_
+                               << "' exited 4 times " << exit_reason;
+                    // Notifies update_verifier and apexd
+                    SetProperty("sys.init.updatable_crashing_process_name", name_);
+                    SetProperty("sys.init.updatable_crashing", "1");
+                }
+            }
+        } else {
+            time_crashed_ = now;
+            crash_count_ = 1;
+        }
+    }
+
+    flags_ &= (~SVC_RESTART);
+    flags_ |= SVC_RESTARTING;
+
+    // Execute all onrestart commands for this service.
+    onrestart_.ExecuteAllCommands();
+
+    NotifyStateChange("restarting");
+    return;
+}
+
+void Service::DumpState() const {
+    LOG(INFO) << "service " << name_;
+    LOG(INFO) << "  class '" << Join(classnames_, " ") << "'";
+    LOG(INFO) << "  exec " << Join(args_, " ");
+    for (const auto& socket : sockets_) {
+        LOG(INFO) << "  socket " << socket.name;
+    }
+    for (const auto& file : files_) {
+        LOG(INFO) << "  file " << file.name;
+    }
+}
+
+
+Result<void> Service::ExecStart() {
+    auto reboot_on_failure = make_scope_guard([this] {
+        if (on_failure_reboot_target_) {
+            trigger_shutdown(*on_failure_reboot_target_);
+        }
+    });
+
+    if (is_updatable() && !IsDefaultMountNamespaceReady()) {
+        // Don't delay the service for ExecStart() as the semantic is that
+### init.cpp QueueAllPropertyActions
+system/core/init/action_manager.cpp:58:void ActionManager::QueueAllPropertyActions() {
+system/core/init/init.cpp:686:static Result<void> queue_property_triggers_action(const BuiltinArguments& args) {
+system/core/init/init.cpp:689:    ActionManager::GetInstance().QueueAllPropertyActions();
+system/core/init/init.cpp:1286:    am.QueueBuiltinAction(queue_property_triggers_action, "queue_property_triggers");
+### action.cpp property trigger check region
+    android::base::Timer t;
+    auto result = command.InvokeFunc(subcontext_);
+    auto duration = t.duration();
+
+    // Any action longer than 50ms will be warned to user as slow operation
+    if (!result.has_value() || duration > 50ms ||
+        android::base::GetMinimumLogSeverity() <= android::base::DEBUG) {
+        std::string trigger_name = BuildTriggersString();
+        std::string cmd_str = command.BuildCommandString();
+
+        LOG(INFO) << "Command '" << cmd_str << "' action=" << trigger_name << " (" << filename_
+                  << ":" << command.line() << ") took " << duration.count() << "ms and "
+                  << (result.ok() ? "succeeded" : "failed: " + result.error().message());
+    }
+}
+
+// This function checks that all property triggers are satisfied, that is
+// for each (name, value) in property_triggers_, check that the current
+// value of the property 'name' == value.
+//
+// It takes an optional (name, value) pair, which if provided must
+// be present in property_triggers_; it skips the check of the current
+// property value for this pair.
+bool Action::CheckPropertyTriggers(const std::string& name, const std::string& value) const {
+    if (property_triggers_.empty()) {
+        return true;
+    }
+
+    if (!name.empty()) {
+        auto it = property_triggers_.find(name);
+        if (it == property_triggers_.end()) {
+            return false;
+        }
+        const auto& trigger_value = it->second;
+        if (trigger_value != "*" && trigger_value != value) {
+            return false;
+        }
+    }
+
+    for (const auto& [trigger_name, trigger_value] : property_triggers_) {
+        if (trigger_name != name) {
+            std::string prop_value = android::base::GetProperty(trigger_name, "");
+            if (trigger_value == "*" && !prop_value.empty()) {
+                continue;
+            }
+            if (trigger_value != prop_value) return false;
+        }
+    }
+    return true;
+}
+
+bool Action::CheckEvent(const EventTrigger& event_trigger) const {
+    return event_trigger == event_trigger_ && CheckPropertyTriggers();
+}
+
+bool Action::CheckEvent(const PropertyChange& property_change) const {
+    const auto& [name, value] = property_change;
+    return event_trigger_.empty() && CheckPropertyTriggers(name, value);
+}
+
+bool Action::CheckEvent(const BuiltinAction& builtin_action) const {
+    return this == builtin_action;
+}
+
+std::string Action::BuildTriggersString() const {
+    std::vector<std::string> triggers;
+
+    for (const auto& [trigger_name, trigger_value] : property_triggers_) {
+        triggers.emplace_back(trigger_name + '=' + trigger_value);
+    }
+    if (!event_trigger_.empty()) {
+        triggers.emplace_back(event_trigger_);
+    }
+
+    return Join(triggers, " && ");
+}
+### create_stream_socket_perms def
+system/sepolicy/public/global_macros:55:define(`create_stream_socket_perms', `{ create rw_stream_socket_perms }')
+system/sepolicy/prebuilts/api/34.0/public/global_macros
+system/sepolicy/prebuilts/api/202604/public/global_macros
+system/sepolicy/prebuilts/api/202404/public/global_macros
+### r_file_perms/create_file_perms defs
+26:define(`r_file_perms', `{ getattr open read ioctl lock map watch watch_reads }')
+35:define(`create_file_perms', `{ create rename setattr unlink rw_file_perms }')
+41:define(`create_dir_perms', `{ create reparent rename rmdir setattr rw_dir_perms }')
+### kernel classmap
+configs
+prebuilts
+tests
+### bionic SO_PEERSEC
+bionic/libc/kernel/uapi/asm-generic/socket.h:46:#define SO_PEERSEC 31
+### libselinux getpeercon
+external/selinux/libselinux/src/getpeercon.c:10:#ifndef SO_PEERSEC
+external/selinux/libselinux/src/getpeercon.c:11:#define SO_PEERSEC 31
+external/selinux/libselinux/src/getpeercon.c:26:	ret = getsockopt(fd, SOL_SOCKET, SO_PEERSEC, buf, &size);
+external/selinux/libselinux/src/getpeercon.c:36:		ret = getsockopt(fd, SOL_SOCKET, SO_PEERSEC, buf, &size);
+### prebuilts/rust
+### rust default version
+build/soong/rust/config/global.go:30:	RustDefaultVersion = "1.93.1"
+build/soong/rust/config/global.go:31:	RustDefaultBase    = "prebuilts/rust-toolchain/"
+build/soong/rust/config/global.go:118:	var RustBase string = RustDefaultBase
+build/soong/rust/config/global.go:126:	pctx.SourcePathVariable("RustDefaultBase", RustDefaultBase)
+build/soong/rust/config/global.go:133:		return "${RustDefaultBase}"
+build/soong/rust/config/global.go:147:	pctx.StaticVariable("RUST_DEFAULT_VERSION", RustDefaultVersion)
+### keystore2 init_rc
+142:    init_rc: ["keystore2.rc"],
+### prng_seeder / aconfigd modules
+./system/security/prng_seeder/Android.bp
+### init.rc disabled service at 1302
+# activation via selection sysprops (e.g. setting ro.boot.vendor.apex.*).
+# The 'ro.vendor.init_dev_config.path' sysprop should be configured at build
+# time via PRODUCT_VENDOR_PROPERTIES, and must point to a binary built with
+# bootstrap bionic and labeled as 'init_dev_config_exec'.
+service init_dev_config ${ro.vendor.init_dev_config.path}
+    oneshot
+    user system
+    seclabel u:r:init_dev_config:s0
+
+service console /system/bin/sh
+    class core
+    console
+    disabled
+    user shell
+    group shell log readproc
+    seclabel u:r:shell:s0
+    setenv HOSTNAME console
+    shutdown critical
+
+on property:ro.debuggable=1
+    # Give writes to the same group for the trace folder on debug builds,
+    # it's further protected by selinux policy.
+    # The folder is used to store method traces.
+    chmod 0773 /data/misc/trace
+    # Give writes and reads to anyone for the window trace folder on debug builds,
+    # it's further protected by selinux policy.
+### perfetto triggers
+55:on property:persist.device_config.global_settings.sys_traced=1
+58:on property:persist.device_config.global_settings.sys_traced=0
+61:on property:debug.atrace.user_initiated=1
+64:on property:persist.traced.enable=1 && property:debug.atrace.user_initiated=""
+71:on property:persist.traced.enable=0
+76:on property:persist.traced.enable=1
+98:on property:persist.traced.enable=2
+104:on post-fs-data
+124:on perfetto_maybe_trace_on_boot && property:persist.debug.perfetto.boottrace=1 && property:persist.traced.enable=1 && property:sys.trace.traced_started=1
+129:on property:ro.persistent_properties.ready=true

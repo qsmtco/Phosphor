@@ -1,0 +1,115 @@
+[8 matches in 4 files]
+docs/specs/P5-S3-PHASE-INSTRUCTIONS.md (4KB, 3 matches)
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-11:2. T1 (`ro.boot.phosphor.safeboot`) is `bootloader_prop` via the prefix row — readable by keygate with **zero** sepolicy changes. Do not add any property_contexts row or get_prop grant for it.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-12:3. Compound event+property triggers are banned on runtime grounds (action.cpp:225-228), not parse grounds. Never use them.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-13:4. Ordering: all `.rc` files parse before any action runs; the queue_property_triggers sweep re-checks after parse. A9 still requires the ≥5-boot empirical proof.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-14:5. A7's evidence MUST verify the staged `/system_ext/etc/passwd` contains `system_ext_phosphor_keygate::7520` (current out/ copy is a stale 0-byte S1 artifact) — before any device op.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-15:6. S3 needs **no new sepolicy at all** — S2's set is complete for this contract. If the plan wants a sepolicy change, that's a STOP-and-report.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-16:7. Comment cleanup carried: `phosphor_keygate.te:8-9`'s phantom `boot_prop`/C1 citation gets fixed (comment-only, same commit).
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-17:8. Decision-table implementation detail (spec §2.1 + §5): absent-as-empty vs unreadable MUST be distinguished by read errno for T1 (empty ⇒ contributes 0; error ⇒ 1). For T2, absent/empty/0 all ⇒ ignore (contribute 0); only literal `1` ⇒ safe. Unreadable T2 (errno) ⇒ 1.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-18:
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-19:**Device-operation gate (from spec §7 — must appear in the plan verbatim):** A1/A2/A3/A4(b) each require a Pixel reboot; A3 additionally a kernel-cmdline path. PM approval **per operation, before execution**. No flash, no wipe. If a build install seems needed → STOP, return to PM. Recovery ladder (`docs/PROJECT-STATUS.md` §8: USB rehearsal, fwupd stopped) re-confirmed before the first reboot. The build-side work (S3-A/S3-B) needs NO device op and proceeds independently.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-20:
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-21:**Build-side scope (what Coder authors):**
+  Line 22: - `services/PhosphorKeygate/main.cpp` — the decision binary: reads T1/T2/T3 per the table; `chord_held()` stub in `key_chord.h` returning false with the fail-closed successor requirement documented; 2-second self-deadline writing 1 and exiting; one structured stderr line `phosphor-keygate: safeboot=<0|1> reason=<t1|t2|undecided>`; exit 0 on decided write, 1 on write failure after fail-closed attempt. ≤300 lines, libbase only (`android::base::GetProperty/SetProperty`).
+  Line 23: - `services/PhosphorKeygate/key_chord.h` — the stub seam.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-24:- `init/phosphor_keygate.rc` — erratum form verbatim.
+  Line 25: - `services/PhosphorKeygate/Android.bp` — fill `srcs` + `init_rc: ["phosphor_keygate.rc"]`... **verify**: the `.rc` lives in `init/` but init_rc paths are module-relative — either move the `.rc` beside the module or use the correct relative path; check what the tree does (precedent: any cc_binary with init_rc).
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-26:- A4(a) lab check — host-run with stubbed property reads failing ⇒ safe=1.
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-27:- The S2 comment cleanup (ruling 7).
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-28:
+  docs/specs/P5-S3-PHASE-INSTRUCTIONS.md-29:**Verification (build-side, no device):** `m -j24 phosphor-keygate` green; `.rc` installed (find its staged path; record it); staged `/system_ext/etc/passwd` has the 7520 row (ruling 5); `host_init_verifier` passes (it runs in the build); binary static checks (strings: no forbidden property names other than the contract set; no binder/socket linkage — `nm`/`ldd` clean). Device acceptance A1–A10 is a **separate, PM-gated execution round** after audit.
+docs/specs/P5-S3-keygate-service.md (20KB, 3 matches)
+  docs/specs/P5-S3-keygate-service.md-72:- Never block boot: bound its own runtime (§3.4) and exit.
+  docs/specs/P5-S3-keygate-service.md-73:
+  docs/specs/P5-S3-keygate-service.md-74:### 2.4 Runtime shape
+  docs/specs/P5-S3-keygate-service.md-75:
+  docs/specs/P5-S3-keygate-service.md-76:- `oneshot`, `class core`, `user phosphor_keygate`, `group phosphor_keygate`, no `capabilities`, no `socket`, no `onrestart`.
+  docs/specs/P5-S3-keygate-service.md-77:- Structured log: exactly one line, `phosphor-keygate: safeboot=<0|1> reason=<t1|t2|t3|undecided>` to stderr → logd. **No secret content; no property dumps.**
+  docs/specs/P5-S3-keygate-service.md-78:- Exit status: `0` on a decided write, `1` on write failure after the fail-closed attempt. Exit status is not consumed by init (it is a oneshot), so it exists only for diagnostics — the *property*, not the status, is the contract.
+  docs/specs/P5-S3-keygate-service.md-79:
+  docs/specs/P5-S3-keygate-service.md-80:---
+  docs/specs/P5-S3-keygate-service.md-81:
+  docs/specs/P5-S3-keygate-service.md-82:## 3. Implementation location
+  docs/specs/P5-S3-keygate-service.md-83:
+  docs/specs/P5-S3-keygate-service.md-84:| Artifact | Path |
+  docs/specs/P5-S3-keygate-service.md-85:|---|---|
+  docs/specs/P5-S3-keygate-service.md-86:| init config | `<tree>/packages/phosphor/init/phosphor_keygate.rc` |
+  Line 87: | Source | `<tree>/packages/phosphor/services/PhosphorKeygate/main.cpp` |
+  Line 88: | Module | `<tree>/packages/phosphor/services/PhosphorKeygate/Android.bp` (created in S1 as a stub; S3 fills `srcs` + `init_rc`) |
+  Line 89: | Chord seam | `<tree>/packages/phosphor/services/PhosphorKeygate/key_chord.h` — a single function `bool chord_held()` returning `false`, documented as the §10.2 open item |
+  docs/specs/P5-S3-keygate-service.md-90:| Domain/property | S2's `phosphor_keygate.te`, `property.te`, `property_contexts` |
+  docs/specs/P5-S3-keygate-service.md-91:
+  docs/specs/P5-S3-keygate-service.md-92:### 3.1 `.rc` verbatim (architecture §6.5, verbatim by intent)
+  docs/specs/P5-S3-keygate-service.md-93:
+  docs/specs/P5-S3-keygate-service.md-94:```
+  docs/specs/P5-S3-keygate-service.md-95:service phosphor_keygate /system/bin/phosphor-keygate
+  docs/specs/P5-S3-keygate-service.md-96:    class core
+  docs/specs/P5-S3-keygate-service.md-97:    user system_ext_phosphor_keygate
+  docs/specs/P5-S3-keygate-service.md-98:    group system_ext_phosphor_keygate
+  docs/specs/P5-S3-keygate-service.md-99:    oneshot
+  docs/specs/P5-S3-keygate-service.md-100:
+  docs/specs/P5-S3-keygate-service.md-101:on load_persist_props_action
+  docs/specs/P5-S3-keygate-service.md-102:    start phosphor_keygate
+  docs/specs/P5-S3-keygate-service.md-103:```
+  docs/specs/P5-S3-keygate-service.md-104:
+docs/specs/P5-S1-build-integration.md (18KB, 1 matches)
+  docs/specs/P5-S1-build-integration.md-53:
+  docs/specs/P5-S1-build-integration.md-54:**B1 — One new repository, one mount point.** Phosphor's Phase 5 payload lives in a single new repository mounted at `packages/phosphor/` in the GrapheneOS tree. It is *added by local manifest*, so **no GrapheneOS-owned project is forked and no GrapheneOS file is edited** except the single product-inheritance line in B4.
+  docs/specs/P5-S1-build-integration.md-55:
+  docs/specs/P5-S1-build-integration.md-56:**B2 — Directory layout (canonical for all later specs).**
+  docs/specs/P5-S1-build-integration.md-57:
+  docs/specs/P5-S1-build-integration.md-58:```
+  docs/specs/P5-S1-build-integration.md-59:packages/phosphor/
+  docs/specs/P5-S1-build-integration.md-60:  phosphor.mk                     # product fragment: PRODUCT_PACKAGES, PRODUCT_COPY_FILES, SYSTEM_EXT_*_SEPOLICY_DIRS
+  docs/specs/P5-S1-build-integration.md-61:  sepolicy/                       # wired empty in S1; content owned by S2
+  docs/specs/P5-S1-build-integration.md-62:    public/                       # -> SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS
+  docs/specs/P5-S1-build-integration.md-63:    private/                      # -> SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS
+  docs/specs/P5-S1-build-integration.md-64:  risk-policy/risk-policy.json    # read-only policy artifact (typed by S2, consumed by S6/S7)
+  docs/specs/P5-S1-build-integration.md-65:  init/                           # empty in S1; phosphor_keygate.rc (S3), phosphor_agentd.rc (S4)
+  docs/specs/P5-S1-build-integration.md-66:  services/PhosphorAgentd/        # cc_binary phosphor-agentd   (S4)
+  Line 67: services/PhosphorKeygate/       # cc_binary phosphor-keygate  (S3)
+  docs/specs/P5-S1-build-integration.md-68:  services/PhosphorDiagnostics/   # cc_binary phosphor-ctl      (S8)
+  docs/specs/P5-S1-build-integration.md-69:  services/PhosphorIpc/           # AIDL + wire headers shared by S4/S6/S7
+  docs/specs/P5-S1-build-integration.md-70:  apps/PhosphorShell/             # android_app PhosphorShell   (S5)
+  docs/specs/P5-S1-build-integration.md-71:  apps/PhosphorBroker/            # android_app PhosphorBroker  (S6)
+  docs/specs/P5-S1-build-integration.md-72:```
+  docs/specs/P5-S1-build-integration.md-73:
+  docs/specs/P5-S1-build-integration.md-74:**B3 — Module definitions.** `cc_binary` modules use `stem:` equal to the module name so the installed filename is `phosphor-agentd` etc.; `android_app` modules use `platform_apis: true`, `certificate: "platform"`, `privileged: true`, and a minimal valid `AndroidManifest.xml` (package only, no `<application>` components beyond `android:label`). No module declares `init_rc` in S1 — the `.rc` install is part of S3/S4 so that S1 cannot start anything at boot. With `privileged: true`, Soong installs [... line cut ...]
+  docs/specs/P5-S1-build-integration.md-75:
+  docs/specs/P5-S1-build-integration.md-76:**B4 — Product hook, exactly one line in a third-party file.** `packages/phosphor/phosphor.mk` is inherited by appending exactly one line to `vendor/adevtool/config/mk/google_devices/device/akita/device.mk`:
+  docs/specs/P5-S1-build-integration.md-77:
+  docs/specs/P5-S1-build-integration.md-78:```make
+  docs/specs/P5-S1-build-integration.md-79:$(call inherit-product, packages/phosphor/phosphor.mk)
+  docs/specs/P5-S1-build-integration.md-80:```
+  docs/specs/P5-S1-build-integration.md-81:
+docs/specs/P5-S1-PHASE-INSTRUCTIONS.md (7KB, 1 matches)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-17:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-18:**Scope:** create the `Phosphor-platform` repo content locally at `/home/cptjaqx/projects/Phosphor-platform` (verified not to exist). It will become a bare git repo mirrored to `/home/cptjaqx/projects/Phosphor-platform.git` in Phase 1b. Do NOT yet touch `/home/cptjaqx/projects/grapheneos-2026091900`.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-19:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-20:**Exact file set** (B2 layout, B3, B5, B7):
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-21:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-22:```
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-23:packages/phosphor/  (== repo root contents)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-24:  phosphor.mk                       # B5 verbatim: PRODUCT_PACKAGES (5), PRODUCT_COPY_FILES (1 json), SYSTEM_EXT_PUBLIC/PRIVATE_SEPOLICY_DIRS
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-25:  sepolicy/public/README            # S1: README only, no policy
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-26:  sepolicy/private/README           # S1: README only, no policy
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-27:  risk-policy/risk-policy.json      # minimal valid read-only JSON artifact (content: {} is acceptable in S1)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-28:  init/                             # empty dir in S1 (use .gitkeep)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-29:  services/PhosphorAgentd/Android.bp + main.cpp      # cc_binary phosphor-agentd, stem:; int main() { return 0; }
+  Line 30: services/PhosphorKeygate/Android.bp + main.cpp     # cc_binary phosphor-keygate, stem:; int main() { return 0; }
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-31:  services/PhosphorDiagnostics/Android.bp + main.cpp # cc_binary phosphor-ctl, stem:; prints "phosphor-ctl: not implemented" to stderr, returns 2
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-32:  services/PhosphorIpc/                             # empty dir in S1 (.gitkeep)
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-33:  apps/PhosphorShell/Android.bp + AndroidManifest.xml   # android_app PhosphorShell, platform_apis/certificate:"platform"/privileged:true, package="com.phosphor.shell", android:label only, NO components, NO init_rc
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-34:  apps/PhosphorBroker/Android.bp + AndroidManifest.xml  # same shape, package="com.phosphor.broker", zero permissions
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-35:```
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-36:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-37:**Constraints:**
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-38:- No `init_rc` in any `Android.bp`; no `src/` in apps; no sepolicy `.te` files; no `.rc` files in `init/`.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-39:- `phosphor.mk` uses `SYSTEM_EXT_*_SEPOLICY_DIRS` exactly (B5 — `BOARD_PLAT_*` hard-aborts at `config.mk:163-164`).
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-40:- `PRODUCT_COPY_FILES` copies exactly one file: `risk-policy.json` → `$(TARGET_COPY_OUT_SYSTEM)/etc/phosphor/risk-policy.json`.
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-41:- Init the repo (`git init`), commit everything on branch `main`, and report the 40-hex commit (A6a needs it).
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-42:
+  docs/specs/P5-S1-PHASE-INSTRUCTIONS.md-43:**Deliverables:** files-changed list with line counts (`wc -l` per file), `git log -1 --oneline`, `git status --porcelain` (must be empty), `find . -type f | sort` output, plus:
+
+[Open with read_file line=N only to edit.]

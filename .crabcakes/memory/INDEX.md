@@ -1,2 +1,4 @@
 - p5-s1-phase1b-accepted — P5-S1 Phase 1b (tree integration) ACCEPTED 2026-11-12 after 4-round adversarial plan loop + post-execution audit, zero f
 - p5-s1-complete-postmortem — P5-S1 (build integration) COMPLETE 2026-11-12: all three phases (1a skeleton, 1b tree integration, 1c build) ACCEPT by a
+- p5-s2-complete-postmortem — P5-S2 (SELinux foundation) CLOSED 2026-11-13 after 3-round adversarial audit loop (NOT ACCEPT → option-(b) fix round → p
+- p5-s3-build-side-accepted — P5-S3 build-side ACCEPTED 2026-11-14 (payload 655fc08, repo 09e3342). Device round A1–A10 pending PM gating. Key discove

@@ -1,0 +1,176 @@
+[line 1 of docs/PROJECT-STATUS.md]
+1|# Phosphor — Project Status and Handoff
+2|
+3|**Snapshot:** 2026-11-10 (supersedes the 2026-09-25 snapshot; that version is in git history at commit `842da7a`)
+4|**Audience:** the develcakes team (Coder / Debugger / Supervisor) and Captain JAQ.
+5|**Purpose:** get an engineer — human or agent — from zero to productive on Phosphor without re-deriving anything.
+6|**Governing document:** `docs/PHOSPHOR-VISION.md` (the goal and source of truth). This file records *where we are*; when it disagrees with the vision, the vision wins.
+7|
+8|---
+9|
+10|## 1. What Phosphor is
+11|
+12|An **agent-native phone operating system**: a GrapheneOS-derived Android platform in which the AI agent is the primary interface and a system coordinator, not an app. The user speaks; the agent resolves intent, calls the appropriate platform capability, and renders the active screen as HTML/JavaScript in real time. Home, notifications, calls, messages, settings, camera and sensors all flow through that one agent-controlled surface.
+13|
+14|One-sentence definition (from the vision): *Phosphor is a GrapheneOS-based, voice-first, agent-native phone operating system whose agent designs and renders the active HTML/JavaScript interface in real time, allowing Captain JAQ to use the Pixel as a coordinated team member.*
+15|
+16|- **Target device:** Google Pixel 8a, codename `akita`, model GKV4X (international, not carrier-locked). Serial `3C121JEKB03922`.
+17|- **Target foundation:** GrapheneOS-derived image, our own signing keys, our own AVB root of trust.
+18|- **Development host:** `qoder` (Linux) + USB to the Pixel.
+19|
+20|### What Phosphor is NOT
+21|
+22|Do not redirect this project into any of these because they are easier:
+23|
+24|- a normal Android app that calls the stock Phone/Messages apps;
+25|- a chatbot floating on top of GrapheneOS;
+26|- a browser shell presented as the final product;
+27|- a Termux-hosted runtime presented as the operating system;
+28|- a Debian VM presented as the OS;
+29|- a collection of loosely connected apps with an AI front-end.
+30|
+31|The repo's pre-existing material — the copied DragonCakes-derived Python agent runtime, the Python HTTP runtime, the browser shell, local Whisper, the Rust bridge, Termux/:API/:Boot, Tailscale/SSH, the on-device workspace — is **prototype and bring-up material only**. Commit `a1dc69a` marks those PoC-era architecture decisions as superseded. `docs/VERIFICATION.md` verifies the **iOS proof-of-concept** (2026-09-04, front-end-agnostic trust requirements); it is not Android/GrapheneOS verification.
+32|
+33|---
+34|
+35|## 2. Where we are, in one line
+36|
+37|**Phases 1–3 are complete and cryptographically verified:** we built a GrapheneOS-derived image from source, signed it with Phosphor's own key chain, flashed it to the Pixel 8a, booted it, and proved the recovery path. **The image is still unmodified GrapheneOS — zero lines of Phosphor code are in it.**
+38|
+39|The vision's first milestone has two halves: *build and boot a GrapheneOS-derived image* (**done**) and *that presents Phosphor as the primary system shell* (**not started**).
+40|
+41|### What is proven
+42|
+43|| Claim | How it was settled |
+44||---|---|
+45|| The build/sign/flash chain works end to end | Cryptographic, not observational: the bootloader's `ro.boot.vbmeta.digest` equals `sha256()` of the first `ro.boot.vbmeta.size` bytes (7488) of the `vbmeta.img` we flashed — `bd17532d485543cabba4d54796461d3c972df9c8d7161930a68d0a0a1d9cf127`. Booting proves nothing on an unlocked bootloader; this comparison is what settles it. |
+46|| We own the key chain | 9 APK/platform keys + the AVB key, generated once, scrypt/PBES2-encrypted, passphrase sealed behind a YubiKey PIV wrap key. Signed release independently verified: OTA cert byte-identical to `releasekey.x509.pem`; vbmeta verifies against the key rebuilt from `avb_pkmd.bin`; system APKs carry our platform cert. |
+47|| Keys are backed up off-host | Escrow on the offline `PHOSPHOR-ESCROW` USB plus a paper copy; the host copy was shredded. The encrypted key set is also on that USB, verified 20/20 hash-identical. |
+48|| The recovery path works | Rung 2 (re-flash an official factory image) tested deliberately, before it was ever needed. |
+49|| AOSP builds on this host | adevtool's dependency build ran 7485 steps to `Build Succeeded`, and a full `akita` build completed (see §6). |
+50|
+51|### What is NOT proven
+52|
+53|- **The product thesis.** That an agent-designed interface beats apps on a phone is a human-factors question, not a technical one. Nothing above touches it.
+54|- **Any Phosphor code at all.** The image presents stock GrapheneOS; vision step 2 ("modify the platform, framework, system services, system shell") has not begun.
+55|- **The shell, the agent service, voice, capabilities, policy** — all of it is still design (Phases 4+).
+56|
+57|---
+58|
+59|## 3. Device state
+60|
+61|Verified on-device 2026-09-25; this is the standing state unless something reflashed it.
+62|
+63|| | |
+64||---|---|
+65|| Device | Pixel 8a (`akita`), serial `3C121JEKB03922`, SKU `GKV4X` |
+66|| Bootloader | **UNLOCKED** (`ro.boot.flash.locked=0`); `fastboot flashing get_unlock_ability` returns `1` |
+67|| Verified boot | `orange` — not enforced (expected while unlocked) |
+68|| Running build | `google/akita/akita:17/CP2A.260805.005/2026092500:user/release-keys` |
+69|| Slot | `_a` (hardcoded `--set-active=a` in `flash-all.sh`) |
+70|| Userdata | **Wiped** (twice). Sitting at the setup wizard, deliberately not set up. |
+71|| Our AVB key | installed in the device's `avb_custom_key` partition |
+72|| 2026-11-10 | Reconnected over USB during this session and correctly identified on the bus as `18d1:4ee1` (MTP), product "Pixel 8a", serial matching the record. Not attached at the moment of writing. |
+73|
+74|**A locked device cannot run our image** — a self-signed image cannot satisfy the existing verified-boot chain, so flashing required unlocking, which wipes. The bootloader is deliberately **left unlocked** for the whole development period.
+75|
+76|### adb vs MTP — the trap that costs an hour
+77|
+78|A Pixel with USB debugging OFF enumerates as MTP only and `adb devices` is empty. That is a USB descriptor fact, not an authorization state — no amount of authorizing, re-plugging or udev fixing will make adb see it. Check the PID, not `adb devices`:
+79|
+80|| PID | mode |
+81||---|---|
+82|| `4ee1` | MTP — debugging OFF; adb cannot see the device at all |
+83|| `4ee2` | MTP + adb |
+84|| `4ee5` / `4ee6` | PTP / PTP + adb |
+85|| `4ee7` | adb only |
+86|| `4ee9` | MIDI + adb |
+87|| `4ee0` | fastboot (bootloader mode) |
+88|
+89|After enabling USB debugging, **replug the cable** — USB does not renegotiate its descriptor set without a reconnect, so an already-plugged phone keeps reporting the old PID. Authorization is per-host RSA key in `~/.android/adbkey` and never carries over from another machine.
+90|
+91|---
+92|
+93|## 4. The host: `qoder`
+94|
+95|- Ubuntu **26.04.1 LTS**, Ryzen 9 9950X (32 threads), 59 GiB RAM, 1.8 TB ext4 root with ~1.4 TB free.
+96|- **Distro decision (2026-09-24): proceed on 26.04 (Option E).** GrapheneOS officially supports Arch, Debian bookworm, Ubuntu 24.10 and 24.04; 26.04 is unsupported but nothing enforces it, and the full build succeeded. **Never propose downgrading the host distro** — there is no supported reverse path (an in-place reverse would leave a hybrid system). If a distro-specific build failure ever appears, the fallback order is (A) a `systemd-nspawn` container of Debian bookworm/Ubuntu 24.04, then (B) Docker/Podman (usually needs `--privileged` for AOSP's namespace build sandbox). Record the failure before switching.
+97|- **`sudo` requires an interactive password** — an agent cannot install packages or run privileged commands. Pattern: write an idempotent script, hand the user `sudo bash <script>`, then verify the result independently.
+98|- **No disk encryption** (plain ext4 root, `/swap.img` swap, zero LUKS). Consequences: secrets staged in tmpfs can be paged out to disk, and plaintext credentials on disk are a real exposure. **Run `sudo swapoff -a` before signing and `swapon -a` after** — swap defeats the guarantee that keys return to rest when signing ends.
+99|- **No GitHub credential.** No token, no `~/.git-credentials`, no credential helper, no SSH key. `qsmtco/Phosphor` is public, so anonymous reads succeed and make the host *look* authenticated when it is not. The user primes git's in-memory cache as one typed line when a push is needed; never `credential.helper=store` on this host.
+100|
+101|### Toolchain (all verified on this host)
+102|
+103|- **`repo`**: the self-updating standalone at `~/.local/bin/repo` (host Python 3.14.4 runs it fine) — not the apt package.
+104|- **`adb` / `fastboot`**: Google platform-tools at `~/android-sdk/platform-tools`, never apt (distro packages ship development snapshots and clobber the version scheme). fastboot must be ≥ 35.0.1.
+105|- **`adevtool`** needs Node.js 24 LTS, kept side by side at `~/android-sdk/node24`. Invoke as `PATH="$HOME/android-sdk/node24/bin:$PATH" yarnpkg --cwd vendor/adevtool/ install` (`yarn` is `yarnpkg` on Debian/Ubuntu). That install migrates adevtool to the newest Yarn, dirtying `package.json`/`yarn.lock` and adding `.yarnrc.yml` + `.yarn/` — harmless, do not mistake it for corruption.
+106|- **`ykman`** at `/usr/bin/ykman`; YubiKey 5 NFC, serial 38381297, fw 5.7.4, PIV slot 9d. Appears on USB as `1050:0407` when plugged in (not at the moment of writing).
+107|- Add `/sbin:/usr/sbin:/usr/local/sbin` to PATH or "many system administration commands will fail".
+108|- Not needed: ccache, clang, ninja — AOSP ships its own prebuilt toolchain.
+109|
+110|### Artifacts on disk
+111|
+112|| What | Path |
+113||---|---|
+114|| Phosphor repo | `~/projects/Phosphor` (qsmtco/Phosphor) |
+115|| GrapheneOS source tree (tag `2026091900`) | `~/projects/grapheneos-2026091900` |
+116|| Signed release | `~/projects/grapheneos-2026091900/releases/2026092500/release-akita-2026092500/` |
+117|| Extracted flash images | `~/phosphor-flash/akita-install-2026092500/` |
+118|| Key set (encrypted) + wrap material | `~/phosphor-keys/akita`, `~/phosphor-keys/{passphrase.sealed,piv-wrap-pub.pem,yubikey.conf}` |
+119|| Signing / verification tooling | `~/projects/Phosphor/scripts/*.sh` |
+120|| Evidence | `~/projects/Phosphor/docs/evidence/phase3-key-generation-20260925.txt`, `pixel8a-baseline-20260924-1038.txt` |
+121|| Escrow USB | label `PHOSPHOR-ESCROW` (offline; not attached) |
+122|
+123|**Workspace rule:** everything project-related lives under `~/projects` (also `DEVELCAKES_PROJECTS_DIR`'s default). Host tools and trust material stay *outside* it (`~/android-sdk`, `~/.local/bin/repo`, `~/.ssh/grapheneos_allowed_signers`) so they do not appear as bogus projects in the develcakes list. **Move a repo tree before `repo sync`, never after** — an init-only tree has no baked absolute paths, but once synced every `.repo/projects/*/config` records an absolute `worktree` path and relocating it breaks the tree.
+124|
+125|---
+126|
+127|## 5. Signing keys, custody, and identities (public values only)
+128|
+129|The key set is **permanent** — the AVB key cannot change without another wipe. It is **10 private keys** (GrapheneOS's own set from `script/common.sh`): `bluetooth gmscompat_lib media networkstack nfc platform releasekey sdk_sandbox shared` plus `avb.pem`. APK keys are RSA 4096; the passphrase is identical across all keys; `make_key`/`encrypt-keys` use scrypt + AES256.
+130|
+131|Custody model: **one key set; the YubiKey gates access rather than performing the signing.** The mechanism that makes token-gating work with zero patching: `script/decrypt-keys` only prompts when the `password` variable is undefined, so a wrapper unwraps the passphrase via the token, exports it, and GrapheneOS's own flow runs untouched. `generate-release.sh` is file-based (`sign_target_files_apks -o -d "$KEY_DIR" --avb_vbmeta_key "$KEY_DIR/avb.pem"`), so supplying key files is the flow's native mode.
+132|
+133|Why the token is not the signer: PIV has 4 usable primary slots for 10 keys, and RSA-4096 signatures on the token are slow and serial across the thousands of APKs a release signs. RSA key size is **not** a constraint (fw 5.7+ supports RSA-3072/4096 in PIV). If signing must ever be hardware-bound, a YubiHSM 2 (~$650) supports RSA 4096 and PKCS#11; `avbtool` has `--signing_helper` and `SignApk.java` references PKCS#11.
+134|
+135|Public identities to check artifacts against:
+136|
+137|| Value | sha256 |
+138||---|---|
+139|| `avb_pkmd.bin` | `2256f03c5d5189debf9466e6dfb8a63d2f66e8abb96f10c074cc289ccb36b602` |
+140|| Platform certificate | `4bcb40d3c470ee9346df9954276294904b0db167f317c940714872b5d6c74a96` |
+141|| Flashed `vbmeta.img` digest (first 7488 bytes) | `bd17532d485543cabba4d54796461d3c972df9c8d7161930a68d0a0a1d9cf127` |
+142|| Vanadium (browser/WebView) signature | `c6adb8b8…`, DN `CN=GrapheneOS` — **not ours**, see below |
+143|
+144|**Vanadium carries GrapheneOS's signature, not ours — expected, and load-bearing.** `external/vanadium` ships prebuilt, already-signed Trichrome/WebView APKs; `generate-release.sh` re-signs AOSP/APEX components to our keys but leaves these alone. Do **not** "fix" it by re-signing them: they are GrapheneOS's component under GrapheneOS's trust anchor. Since the browser/WebView is Phosphor's intended *shell*, owning that signature requires building Chromium from source — an architectural decision for Phase 4, not a build tweak. Check APK signatures against `com.android.settings` or `com.android.shell`, never Vanadium.
+145|
+146|**Where keys live:** at rest in `keys/<device>/` (keep it OUTSIDE the source tree — 1057 git repos is the last place a private key belongs; mode 0700); during signing in `mktemp -d /dev/shm/...` so plaintext exists in RAM only, removed by an EXIT trap. **Never back up the encrypted key files without the means to unwrap them** (the wrapped passphrase blob + a reproducible/escrowed PIV key) — that yields a backup that looks complete and is worthless.
+147|
+148|---
+149|
+150|## 6. What was done, phase by phase
+151|
+152|### Phase 0 — Project definition and control documents — done
+153|Vision, build plan (16 phases), architecture and trust specs.
+154|
+155|### Phase 1 — Build-host and device readiness — done
+156|Host audited and prepared; toolchain installed and verified. The device was found **already running official GrapheneOS** (Android 17, `CP2A.260805.005`, zero GMS/Vending), which retired the "install GrapheneOS first" steps. Baseline evidence: `docs/evidence/pixel8a-baseline-20260924-1038.txt`.
+157|
+158|### Phase 2 — GrapheneOS source and build foundation — done
+159|Source synced at tag `2026091900` with the **signed tag verified** (`Good "git" signature for contact@grapheneos.org`; `gpg.ssh.allowedSignersFile` set for the manifests repo). The device tree is **not** at `device/google/akita` — GrapheneOS keeps it in `vendor/adevtool/config/mk/google_devices/device/akita/`, so a missing `device/google/<codename>` is normal. `adevtool generate-all -d akita` produced `vendor/google_devices/akita` (~4.7k files, 1.3 GB, includes firmware); the lunch target afterwards is plain `akita`.
+160|
+161|**Verified build recipe:**
+162|
+163|```bash
+164|cd ~/projects/grapheneos-2026091900
+165|source build/envsetup.sh
+166|lunch akita-cur-user            # NOT akita-user, NOT akita-ap2a-user
+167|m -j24 vendorbootimage vendorkernelbootimage target-files-package
+168|```
+169|
+170|~1 h 06 m at `-j24`; 168,199 ninja steps; `out/` ends at ~107 GB. Outputs: 23 `.img` files in `out/target/product/akita/`, plus the signing input `out/target/product/akita/obj/PACKAGING/target_files_intermediates/akita-target_files.zip` (~3.6 GB, 8,841 files, 17 images inside). There is no `super.img` at this stage — only `super_empty.img`; assembled images come later. Expected fingerprint here ends `:user/test-keys` (unsigned test keys — correct before the release pipeline). Pixel 8a needs `vendorbootimage vendorkernelbootimage` before `target-files-package`; a bare `target-files-package` is not enough.
+171|
+172|`lunch` needs `<product>-<release>-<variant>`; the release config is **`cur`** (GrapheneOS's own guide shows `lunch husky-cur-user`). Never pick it by listing `build/release/build_config/` — that directory holds only a stale AOSP `ap2a.scl` (SDK 34, UP1A, patch 2024-09-05) which `lunch` accepts but which defines no `RELEASE_KERNEL_AKITA_DIR`, producing `TARGET_KERNEL_DIR` empty and a misleading board-config abort on `vendor_kernel_boot.modules.load not found or empty`. Correct values live in `build/release/flag_values/<release>/RELEASE_KERNEL_<DEV>_DIR.textproto`. Do not set `OFFICIAL_BUILD=true` unless the Updater URL in `packages/apps/Updater/res/values/config.xml` is repointed at our own server.
+173|
+174|### Phase 3 — Signing, flashing, recovery — done, ve
+[... truncated; line window cut after 16384 bytes; continue with line=174 ...]

@@ -1,0 +1,6 @@
+---
+status: live
+superseded_by: 
+origin: log
+---
+P5-S3 build-side ACCEPTED 2026-11-14 (payload 655fc08, repo 09e3342). Device round A1–A10 pending PM gating. Key discovery (audit BUG #1, durable): this tree NEVER runs host_init_verifier on Soong init_rc files — staging is a bare cp (base_rules.mk:611 gates verified copy to non-Soong; fsgen/filesystem_creator.go:1714 disables the Soong check). Any .rc acceptance must hand-run the verifier with the build's exact arg form (-p passwd files + --property-contexts per partition); exact command in docs/evidence/s3b-keygate-build-audit/REPORT.md. Also: ETC passwd files "may be empty if no AIDs" (fs_config Android.bp:75-76) — 0-byte is correct for partitions without config.fs entries; only system_ext carries ours. Keygate contract facts: rc trigger is load_persist_props_action (late-init forks before persist load ⇒ always-safeboot bug); rc user must be partition-prefixed AID name (system_ext_phosphor_keygate); ro.boot.* is bootloader_prop readable by every domain (zero sepolicy); reason=t1 on the normal path (enum has no none); bionic read API needed for errno semantics (libbase GetProperty cannot express absent-vs-error). 12-scenario A4(a) lab pattern (harness #includes real main.cpp with main renamed) is reusable for S4.

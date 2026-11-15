@@ -1,0 +1,102 @@
+[15 matches in 10 files]
+docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md (11KB, 1 matches)
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-55:## The bisect experiment, honestly recorded
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-56:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-57:Nine build variants (B, D, G, J, M, plus full-payload attempts 1–9) were run to chase `"isolated_compute_allowed_property_type" does not exist`. **The investigation was invalidated by two facts discovered late:**
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-58:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-59:1. **Stale ninja cache.** The variant-G "pass" was a stale `sepolicy_test` genrule output: hand-running the test binary at G's state reproduces exit 1 and the same 142 stderr lines. The S1 "control pass" was only genuine after the genrule intermediates were deleted and rebuilt (fresh run: exit 0).
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-60:2. **The 142 stderr lines are constant noise on BOTH states** — `sepol_wrap.cpp:120` printing a missing-but-harmless attribute; S1 hand-run: `HAND_EXIT=0`, same 142 lines. Only the exit code flips.
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-61:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-62:With streams separated, stderr beyond the noise showed the actual violations verbatim:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-63:```
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-64:The following types on /data/ must be associated with the "core_data_file_type" attribute.
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-65:Violator types and corresponding paths:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-66:('phosphor_agentd_data_file', '/data/misc/phosphor(/.*)?')
+  Line 67: The following domain(s) must be associated with the "coredomain" attribute because they are executed off of /system:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-68:phosphor_agentd phosphor_keygate
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-69:```
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-70:`e477f4b` fixed exactly those. Every earlier "fix" that survived (backslashes, placement, forms) is a real compiler-driven improvement with its own diagnostic; the *reasoning* attached to `f5ddca6` was wrong and is corrected in-tree.
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-71:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-72:## Option (b) fix round (2026-11-13, post-audit, PM-approved)
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-73:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-74:> **SUPERSEDED-BY NOTE (2026-11-13, final re-verify fold-back):** this section is the *round-1* record. The same day's paper-fix round superseded it: deferral ledgered to **S7** (not S5 — S7 §7 item 6), gnss_device added, final rule count **17** at `22809e3`/`8adacb5`. Final disposition: docs/specs/P5-S2-FIXROUND-REAUDIT.md verdict ACCEPT.
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-75:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-76:**Audit verdict was NOT ACCEPT (BUG #1 CRITICAL / #2/#3 HIGH, both independently reproduced by the Supervisor).** PM chose option (b): make the rules strict-clean; enforcement-regime decision deferred to S8.
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-77:
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-78:- Payload `225c3a9`: blanket `dev_type` rules (inert — 12 plat-baseline violations, allow wins at runtime) replaced by §8's named types `radio_device`/`camera_device`/`audio_device` chr+blk (plat-public, `public/device.te:5,11,20`). Shell inbound-binder neverallow (83 violations = generic app-domain binder baseline; rule was written against S5's future rules) **deferred to S5**, obligation recorded in-tree + here. Rule count restored to the plan's 15.
+  docs/handoffs/P5-S2-PHASE-S2B-EVIDENCE.md-79:- **Decisive gate, executed:** binary-mode `checkpolicy -M -c 30` on the fresh build conf (mtime 23:10): `CP_EXIT=0`, **zero neverallow violations of any kind** — strict-clean, not merely phosphor-clean. Hand-run `sepolicy_tests`: exit 0, 142 noise, 0 other. Full build targets green.
+docs/specs/P5-S8-diagnostics-exit.md (22KB, 2 matches)
+  docs/specs/P5-S8-diagnostics-exit.md-34:**Domain (closed by S2 A8, asserted in A4):** `phosphor-ctl` has **no domain of its own** — it runs in the existing `shell` domain, as the invoking `adb shell` UID, because it is a read-only on-demand tool with no init service. It is a fifth *installed module*, not a fifth Phosphor process or domain, and takes no fifth AID. Every read below is therefore bounded by what `shell` can already read; a command that would need more is dropped, never granted.
+  docs/specs/P5-S8-diagnostics-exit.md-35:
+  docs/specs/P5-S8-diagnostics-exit.md-36:| Command | Reads | Output contract |
+  docs/specs/P5-S8-diagnostics-exit.md-37:|---|---|---|
+  Line 38: | `status` | `sys.phosphor.safeboot`, `init.svc.phosphor_agentd`, `init.svc.phosphor_keygate`, `pidof`, broker bound-state | One line per subsystem: `NAME=STATE (detail)`. States: `ok`, `absent`, `down`, `unknown`. |
+  docs/specs/P5-S8-diagnostics-exit.md-39:| `health` | S4's `/data/misc/phosphor/health` + the above | Machine-greppable `key=value` lines; non-zero exit if any required subsystem is not `ok`. **The single check the drill's automation uses.** |
+  docs/specs/P5-S8-diagnostics-exit.md-40:| `policy` | `/system/etc/phosphor/risk-policy.json` + the broker's `policyVersion()` | `policy_version=`, `sha256=`, `broker_version=`, `match=true|false`. **Read-only**; never writes the artifact. |
+  docs/specs/P5-S8-diagnostics-exit.md-41:| `ipc` | socket presence/mode; agentd `last_frame_at`; broker client count | Per-channel: `c-a=ok|down`, `c-b=…`, `c-c=…`, with the observed evidence (mode, age, count). |
+  docs/specs/P5-S8-diagnostics-exit.md-42:| `log` | logd buffers filtered to `phosphor-*` tags | The last N lines; **redaction-preserving** (it prints what was logged, and nothing was logged that contains a payload). Never unredacts, never dumps `/data`. |
+  docs/specs/P5-S8-diagnostics-exit.md-114:| E7 | Safe boot lands on the stock launcher | S5 A2 | PASS |
+  docs/specs/P5-S8-diagnostics-exit.md-115:| E8 | Broker binds; card renders with shell dead | S6 A1/A2, **exercised via S7 §2.2's client** (S6 depends on S7) | PASS |
+  docs/specs/P5-S8-diagnostics-exit.md-116:| E9 | Channels round-trip and deny outsiders | S7 A1/A3 | PASS |
+  docs/specs/P5-S8-diagnostics-exit.md-117:| E10 | Diagnostics reproducible by a second person | S8 §2.3, run twice, by a different operator if available | PASS |
+  docs/specs/P5-S8-diagnostics-exit.md-118:| E11 | **§4.1 H1 re-run** (architecture-named) | S5 A5 | PASS, or DEFERRED with reason — **not omitted** |
+  Line 119: | E12 | **§3 hard-restricted grant landing** (architecture-named) | Phase 9 (SMS/contacts not implemented in Phase 5) | **DEFERRED with reason** — the capability does not exist yet, so the grant cannot be exercised; the deliverable (allowlist entry) is Phase 9's. Recording this is mandatory; claiming it is not. |
+  docs/specs/P5-S8-diagnostics-exit.md-120:| E13 | **R-PERF microbench** (architecture-named) | Phase 8 (classifier) / Phase 13 (final) | **DEFERRED with reason** — no classifier in Phase 5, so there is nothing to benchmark; the ≤5 ms/≤1 ms/±10% targets are unchanged and unattributed to Phase 5. |
+  docs/specs/P5-S8-diagnostics-exit.md-121:| E14 | Drift check: the built tree matches the documented architecture | S8 | PASS — any place where implementation and §2.1/§6.5/§8 disagree is listed, with which one wins and why |
+  docs/specs/P5-S8-diagnostics-exit.md-122:
+  docs/specs/P5-S8-diagnostics-exit.md-123:**E14 is the spec's real value.** Phase 5 is the first phase where design meets a build; the exit note must list every divergence found (property naming, init event choice, AID spelling, frame limits, card host mechanics) so Phase 6 inherits facts, not assumptions.
+  docs/specs/P5-S8-diagnostics-exit.md-124:
+docs/specs/P5-S1-build-integration.md (18KB, 3 matches)
+  docs/specs/P5-S1-build-integration.md-16:|---|---|---|---|
+  docs/specs/P5-S1-build-integration.md-17:| `phosphor-agentd` | `cc_binary` | `/system/bin/phosphor-agentd` | stub `main()` → exit 0. Never started (no `.rc` until S4). |
+  docs/specs/P5-S1-build-integration.md-18:| `phosphor-keygate` | `cc_binary` | `/system/bin/phosphor-keygate` | stub `main()` → exit 0. Never started (no `.rc` until S3). |
+  Line 19: | `phosphor-ctl` | `cc_binary` | `/system/bin/phosphor-ctl` | stub `main()` → prints `phosphor-ctl: not implemented` to stderr, exit 2. (Filled in by S8; **not** a fifth Phosphor process/domain — it is an on-demand tool invoked from `adb shell` and runs in the existing `shell` domain, so it needs no `phosphor_*` domain and no fifth AID. Fixed by S2 A8; see §2 last row.) |
+  docs/specs/P5-S1-build-integration.md-20:| `PhosphorShell` | `android_app` | `/system/priv-app/PhosphorShell/PhosphorShell.apk` | valid APK, package `com.phosphor.shell`, **zero declared components**. (Filled in by S5.) |
+  docs/specs/P5-S1-build-integration.md-21:| `PhosphorBroker` | `android_app` | `/system/priv-app/PhosphorBroker/PhosphorBroker.apk` | valid APK, package `com.phosphor.broker`, **zero declared components**, zero permissions. (Filled in by S6.) |
+  docs/specs/P5-S1-build-integration.md-22:
+  docs/specs/P5-S1-build-integration.md-70:  apps/PhosphorShell/             # android_app PhosphorShell   (S5)
+  docs/specs/P5-S1-build-integration.md-71:  apps/PhosphorBroker/            # android_app PhosphorBroker  (S6)
+  docs/specs/P5-S1-build-integration.md-72:```
+  docs/specs/P5-S1-build-integration.md-73:
+  Line 74: **B3 — Module definitions.** `cc_binary` modules use `stem:` equal to the module name so the installed filename is `phosphor-agentd` etc.; `android_app` modules use `platform_apis: true`, `certificate: "platform"`, `privileged: true`, and a minimal valid `AndroidManifest.xml` (package only, no `<application>` components beyond `android:label`). No module declares `init_rc` in S1 — the `.rc` install is part of S3/S4 so that S1 cannot start anything at boot. With `privileged: true`, Soong installs [... omitted end of long line]
+  docs/specs/P5-S1-build-integration.md-75:
+  docs/specs/P5-S1-build-integration.md-76:**B4 — Product hook, exactly one line in a third-party file.** `packages/phosphor/phosphor.mk` is inherited by appending exactly one line to `vendor/adevtool/config/mk/google_devices/device/akita/device.mk`:
+  docs/specs/P5-S1-build-integration.md-77:
+  docs/specs/P5-S1-build-integration.md-78:```make
+  docs/specs/P5-S1-build-integration.md-120:Development variant (until the remote exists): replace the `remote`/`name` pair with `fetch="file:///home/cptjaqx/projects"` and `name="Phosphor-platform.git"` against a local bare mirror at `/home/cptjaqx/projects/Phosphor-platform.git`. **Erratum 4 (PM-approved 2026-11-12):** `repo` composes a project URL as `fetch + "/" + name` (verified at `.repo/repo/manifest_xml.py:232-233`), so this split is the only form that resolves to the mirror — the previous literal text (`fetch="file:///…/Phosphor- [... line cut ...]
+  docs/specs/P5-S1-build-integration.md-121:
+  docs/specs/P5-S1-build-integration.md-122:**B7 — Stub sources.** `services/*/main.cpp` is exactly:
+  docs/specs/P5-S1-build-integration.md-123:
+  docs/specs/P5-S1-build-integration.md-124:```cpp
+  Line 125: int main() { return 0; }         // phosphor-ctl prints one line to stderr and returns 2
+  docs/specs/P5-S1-build-integration.md-126:```
+  docs/specs/P5-S1-build-integration.md-127:
+  docs/specs/P5-S1-build-integration.md-128:App stubs contain a single `AndroidManifest.xml` with `<manifest package="com.phosphor.shell">` (resp. `.broker`) and nothing else, and no `src/` beyond an empty package directory.
+  docs/specs/P5-S1-build-integration.md-129:
+  docs/specs/P5-S1-build-integration.md-130:---
+docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md (12KB, 1 matches)
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-34:---
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-35:
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-36:## 2. What's Good About the Code
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-37:
+  Line 38: 1. **Spec-exact minimal modules:** every module is the smallest thing that satisfies its B3/B7 clause — `int main() { return 0; }` stubs, manifest-only APKs with zero components (`services/PhosphorAgentd/main.cpp`, `apps/PhosphorShell/AndroidManifest.xml`) — so S1 provably adds zero boot behavior, verified statically (A4) and by construction.
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-39:2. **The one-line seam discipline:** the entire third-party footprint is a single `inherit-product` line at `device.mk:9` (`@@ -6,3 +6,4 @@`, 1 insertion, 0 deletions), landing through `printf >>` so a diff can only ever be an append — the A5 acceptance became mechanically checkable.
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-40:3. **Totality-gate regeneration proof:** the fixed-cutoff `2026-01-01` predicate (`find … ! -newermt`) + preserved-set diff + `NEWER+PRESERVED==BEFORE` arithmetic (plan S6.0/S6.3, executed 4736+3==4739) converts "generate-all ran" into "generate-all rewrote every file and preserved exactly the three zip-mtime archives" — a proof that survives `SKIP_DEP_BUILD` log verbosity and requires no git tracking of an untracked tree.
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-41:
+  docs/post-mortems/2026-11-10-P5-S1-build-integration-POST-MORTEM.md-42:---
+docs/specs/P5-S1-PHASE-INSTRUCTIONS.md (7KB, 3 matches)
+  Line 29: services/PhosphorAgentd/Android.bp + main.cpp      # cc_binary phosphor-agentd, stem:; int main() { return 0; }
+  Line 30: services/PhosphorKeygate/Android.bp + main.cpp     # cc_binary phosphor-keygate, stem:; int main() { return 0; }
+  Line 31: services/PhosphorDiagnostics/Android.bp + main.cpp # cc_binary phosphor-ctl, stem:; prints "phosphor-ctl: not implemented" to stderr, returns 2
+docs/specs/P5-S6-broker-app.md (22KB, 1 matches)
+  Line 153: **A7 — §3 deferral is documented, row by row.** The completion note reproduces §3's table with an explicit Phase 9 marker per row (telephony, SMS, contacts, notifications, settings, audio, sensors, location, camera/torch, Bluetooth, clipboard, vibrator, apps, files) and a one-line reason (`hardRestricted` allowlist not yet built, capability not implemented, etc.). Anything not marked is a defect.
+docs/PHOS-SPEC-001-trust-architecture.md (20KB, 1 matches)
+  Line 24: Phosphor adaptive-UI system: an LLM agent that generates interactive HTML
+docs/PHOS-SPEC-002-system-integration.md (8KB, 1 matches)
+  Line 10: Phosphor today occupies the interface layer of a host Linux system: the
+docs/P2-AUDIT.md (3KB, 1 matches)
+  Line 35: - **M7 OPEN** — save-time secret redaction not implemented - tracked for P3
+docs/P5-AUDIT.json (9KB, 1 matches)
+  Line 27: "detail": "When the user taps Deny, /approve marks the entry used and returns {ok, denied:true} to the app, which renders a 'Denied' line in the page. Nothing is appended to the agent's session history and no 'user declined' tool result is ever delivered — R-GATE-7 (MUST) and §8 step 6 are not implemented. Symmetrically, on Approve the command output goes only to the page via approvalResult; the agent's conversation never contains the exit code/output, so the agent cannot reason about or r [... omitted end of long line]
+
+[Open with read_file line=N only to edit.]

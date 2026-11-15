@@ -1,0 +1,296 @@
+### toybox present?
+Android.bp
+Config.in
+LICENSE
+METADATA
+MODULE_LICENSE_BSD
+### init socket files
+### lmkd rc
+./system/memory/lmkd/lmkd.rc
+service lmkd /system/bin/lmkd
+    class core
+    user lmkd
+    group lmkd system readproc
+    capabilities DAC_OVERRIDE KILL IPC_LOCK SYS_NICE SYS_RESOURCE
+    critical
+    socket lmkd seqpacket+passcred 0660 system system
+    task_profiles ServiceCapacityLow
+
+on property:lmkd.reinit=1
+    exec_background /system/bin/lmkd --reinit
+
+on property:sys.boot_completed=1
+    exec_background /system/bin/lmkd --boot_completed
+
+# reinitialize lmkd after device finished booting if experiments set any flags during boot
+on property:sys.boot_completed=1 && property:lmkd.reinit=0
+    setprop lmkd.reinit 1
+
+# properties most likely to be used in experiments
+# setting persist.device_config.* property either triggers immediate lmkd re-initialization
+# if the device finished booting or sets lmkd.reinit=0 to re-initialize lmkd after boot completes
+on property:persist.device_config.lmkd_native.debug=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.kill_heaviest_task=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.kill_timeout_ms=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.relaxed_available_memory=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.swap_free_low_percentage=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.psi_partial_stall_ms=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.psi_complete_stall_ms=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.psi_window_size_ms=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.thrashing_limit=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.thrashing_limit_decay=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.thrashing_limit_critical=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.swap_util_max=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.filecache_min_kb=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.direct_reclaim_threshold_ms=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.swap_compression_ratio=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.swap_compression_ratio_div=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+
+on property:persist.device_config.lmkd_native.lowmem_min_oom_score=*
+    setprop lmkd.reinit ${sys.boot_completed:-0}
+### lmkd.te socket lines
+84:allow lmkd lmkd_socket:sock_file write;
+87:unix_socket_send(lmkd, statsdw, statsd)
+### conf lmkd lines
+7495:type lmkd_socket, file_type, coredomain_socket;
+8049:#line 1 "system/sepolicy/public/lmkd.te"
+8050:# lmkd low memory killer daemon
+8051:type lmkd, domain, mlstrustedsubject;
+8052:type lmkd_exec, system_file_type, exec_type, file_type;
+11219:  type lmkd_config_prop, property_type, system_property_type, system_public_property_type;
+11233:allow vendor_init lmkd_config_prop:property_service set;
+11237:allow vendor_init lmkd_config_prop:file { getattr open read map };
+11243:  neverallow { domain -init -vendor_init -init_dev_config } lmkd_config_prop:property_service set;
+12655:  type lmkd_prop, property_type, system_property_type, system_public_property_type;
+23639:neverallow { domain -bpfloader -gpuservice -lmkd -mediaprovider_app -netd -netutils_wrapper                -system_server                             } fs_bpf:file                { getattr read };
+23649:neverallow { domain -bpfloader -gpuservice -lmkd                    -netd -netutils_wrapper -network_stack -system_server -traced_probes -uprobestats } { bpffs_type -fs_bpf_vendor }:file write;
+25554:allow coredomain lmkd_config_prop:file { getattr open read map };
+25982:    -lmkd
+32332:  lmkd
+32394:  lmkd
+37133:allow flags_health_check device_config_lmkd_native_prop:property_service set;
+37137:allow flags_health_check device_config_lmkd_native_prop:file { getattr open read map };
+52860:# allow init to establish connection and communicate with lmkd
+52863:allow init lmkd_socket:sock_file write;
+52865:allow init lmkd:unix_stream_socket connectto;
+56317:#line 1 "system/sepolicy/private/lmkd.te"
+56318:typeattribute lmkd coredomain;
+56319:typeattribute lmkd bpfdomain;
+56331:allow init lmkd_exec:file { getattr open read execute map };
+### socket_class_set def
+system/sepolicy/microdroid/system/public/global_macros:13:define(`socket_class_set', `{ socket tcp_socket udp_socket rawip_socket netlink_socket packet_socket key_socket unix_stream_socket unix_dgram_socket appletalk_socket netlink_route_socket netlink_tcpdiag_socket netlink_nflog_socket netlink_xfrm_socket netlink_selinux_socket netlink_audit_socket netlink_dnrt_socket netlink_kobject_uevent_socket tun_socket netlink_iscsi_socket netlink_fib_lookup_socket netlink_connector_socket netlink_netfilter_socket netlink_generic_socket netlink_scsitransport_socket netlink_rdma_socket netlink_crypto_socket sctp_socket icmp_socket ax25_socket ipx_socket netrom_socket atmpvc_socket x25_socket rose_socket decnet_socket atmsvc_socket rds_socket irda_socket pppox_socket llc_socket can_socket tipc_socket bluetooth_socket iucv_socket rxrpc_socket isdn_socket phonet_socket ieee802154_socket caif_socket alg_socket nfc_socket vsock_socket kcm_socket qipcrtr_socket smc_socket xdp_socket }')
+system/sepolicy/public/global_macros:14:define(`socket_class_set', `{ socket tcp_socket udp_socket rawip_socket netlink_socket packet_socket key_socket unix_stream_socket unix_dgram_socket appletalk_socket netlink_route_socket netlink_tcpdiag_socket netlink_nflog_socket netlink_xfrm_socket netlink_selinux_socket netlink_audit_socket netlink_dnrt_socket netlink_kobject_uevent_socket tun_socket netlink_iscsi_socket netlink_fib_lookup_socket netlink_connector_socket netlink_netfilter_socket netlink_generic_socket netlink_scsitransport_socket netlink_rdma_socket netlink_crypto_socket sctp_socket icmp_socket ax25_socket ipx_socket netrom_socket atmpvc_socket x25_socket rose_socket decnet_socket atmsvc_socket rds_socket irda_socket pppox_socket llc_socket can_socket tipc_socket bluetooth_socket iucv_socket rxrpc_socket isdn_socket phonet_socket ieee802154_socket caif_socket alg_socket nfc_socket vsock_socket kcm_socket qipcrtr_socket smc_socket xdp_socket }')
+### init.te socket rules
+76:allow init snapuserd_socket:sock_file write;
+77:allow init snapuserd:unix_stream_socket connectto;
+100:allow init prng_seeder:unix_stream_socket { create bind listen };
+150:unix_socket_connect(init, lmkd, lmkd)
+420:}:{ sock_file fifo_file } { create getattr open read setattr relabelfrom unlink };
+709:allow init domain:unix_stream_socket { create bind setopt };
+710:allow init domain:unix_dgram_socket { create bind setopt };
+### sock_file create precedents
+system/sepolicy/private/bluetooth.te:24:allow bluetooth bluetooth_socket:sock_file create_file_perms;
+system/sepolicy/private/crosvm.te:135:  allow crosvm_domain virtualizationservice_data_file:sock_file { create write unlink };
+system/sepolicy/private/crosvm_vu_fs.te:49:allow crosvm_vu_fs virtualizationservice_data_file:sock_file { create write unlink };
+system/sepolicy/private/crosvm_vu_snd.te:24:allow crosvm_vu_snd virtualizationservice_data_file:sock_file { create write unlink };
+system/sepolicy/private/drmserver.te:38:allow drmserver drmserver_socket:sock_file create_file_perms;
+system/sepolicy/private/drmserver.te:39:auditallow drmserver drmserver_socket:sock_file create;
+system/sepolicy/private/early_virtmgr.te:16:allow early_virtmgr_domain vm_data_file:sock_file create_file_perms;
+system/sepolicy/private/init.te:420:}:{ sock_file fifo_file } { create getattr open read setattr relabelfrom unlink };
+system/sepolicy/private/shell.te:339:allow shell shell_test_data_file:sock_file create_file_perms;
+system/sepolicy/private/system_server.te:1015:allow system_server system_ndebug_socket:sock_file create_file_perms;
+### SVC_DISABLED in service.cpp
+346:        flags_ |= SVC_DISABLED;
+350:    if (flags_ & (SVC_DISABLED | SVC_RESET))  {
+504:        flags_ |= SVC_DISABLED;
+516:        flags_ |= SVC_DISABLED;
+637:    bool disabled = (flags_ & (SVC_DISABLED | SVC_RESET));
+677:        flags_ |= SVC_DISABLED;
+684:        flags_ |= SVC_DISABLED;
+941:    flags_ &= ~(SVC_DISABLED | SVC_RESTARTING | SVC_RESET | SVC_RESTART | SVC_DISABLED_START);
+945:    if (!(flags_ & SVC_DISABLED)) {
+948:        flags_ |= SVC_DISABLED_START;
+954:    flags_ &= ~(SVC_DISABLED | SVC_RC_DISABLED);
+955:    if (flags_ & SVC_DISABLED_START) {
+966:    StopOrReset(SVC_DISABLED);
+970:    flags_ &= ~(SVC_RESTARTING | SVC_DISABLED_START);
+971:    flags_ |= SVC_DISABLED;
+1002:// The how field should be either SVC_DISABLED, SVC_RESET, or SVC_RESTART.
+1006:    flags_ &= ~(SVC_RESTARTING | SVC_DISABLED_START);
+1008:    if ((how != SVC_DISABLED) && (how != SVC_RESET) && (how != SVC_RESTART)) {
+1009:        // An illegal flag: default to SVC_DISABLED.
+1012:        how = SVC_DISABLED;
+1017:        flags_ |= (flags_ & SVC_RC_DISABLED) ? SVC_DISABLED : SVC_RESET;
+1024:        flags_ &= (~(SVC_DISABLED | SVC_RESET));
+### service.h defaults
+140:            return std::max(restart_period_, default_restart_period_);
+142:        return restart_period_;
+186:    android::base::boot_clock::time_point time_crashed_;  // first crash within inspection window
+189:    std::chrono::minutes fatal_crash_window_ = 4min;  // fatal() when more than 4 crashes in it
+238:    const std::chrono::seconds default_restart_period_ = 5s;
+239:    std::chrono::seconds restart_period_ = default_restart_period_;
+### parser restart_period
+110:    std::optional<std::chrono::minutes> fatal_crash_window;
+128:                return Error() << "critical: 'fatal_crash_window' must be an integer > 0";
+130:            fatal_crash_window = std::chrono::minutes(minutes);
+139:    if (fatal_crash_window) {
+140:        service_->fatal_crash_window_ = *fatal_crash_window;
+374:        return Error() << "restart_period value must be an integer >= 0";
+376:    service_->restart_period_ = std::chrono::seconds(period);
+613:        {"restart_period",          {1,     1,    &ServiceParser::ParseRestartPeriod}},
+### init.cpp 395-430
+    prop_waiter_state.CheckAndResetWait(name, value);
+}
+
+static std::optional<boot_clock::time_point> HandleProcessActions() {
+    std::optional<boot_clock::time_point> next_process_action_time;
+    for (const auto& s : ServiceList::GetInstance()) {
+        if ((s->flags() & SVC_RUNNING) && s->timeout_period()) {
+            auto timeout_time = s->time_started() + *s->timeout_period();
+            if (boot_clock::now() > timeout_time) {
+                s->Timeout();
+            } else {
+                if (!next_process_action_time || timeout_time < *next_process_action_time) {
+                    next_process_action_time = timeout_time;
+                }
+            }
+        }
+
+        if (!(s->flags() & SVC_RESTARTING)) continue;
+
+        auto restart_time = s->time_started() + s->restart_period();
+        if (boot_clock::now() > restart_time) {
+            if (auto result = s->Start(); !result.ok()) {
+                LOG(ERROR) << "Could not restart process '" << s->name() << "': " << result.error();
+            }
+        } else {
+            if (!next_process_action_time || restart_time < *next_process_action_time) {
+                next_process_action_time = restart_time;
+            }
+        }
+    }
+    return next_process_action_time;
+}
+
+static Result<void> DoControlStart(Service* service) {
+    return service->Start();
+}
+### service.cpp 690-712
+        scon = seclabel_;
+    } else {
+        auto result = ComputeContextFromExecutable(args_[0]);
+        if (!result.ok()) {
+            return result.error();
+        }
+        scon = *result;
+    }
+
+    if (!mount_namespace_.has_value()) {
+        // remember from which mount namespace the service should start
+        SetMountNamespace();
+    }
+
+    LOG(INFO) << "starting service '" << name_ << "'...";
+
+    std::vector<Descriptor> descriptors;
+    for (const auto& socket : sockets_) {
+        if (auto result = socket.Create(scon); result.ok()) {
+            descriptors.emplace_back(std::move(*result));
+        } else {
+            LOG(INFO) << "Could not create socket '" << socket.name << "': " << result.error();
+        }
+### service.cpp 845-870
+//   get available, mark it as pre-apexd one. Note that this marking is
+//   permanent. So for example, if the service is re-launched (e.g., due
+//   to crash), it is still recognized as pre-apexd... for consistency.
+void Service::SetMountNamespace() {
+    // APEXd is always started in the "current" namespace because it is the process to set up
+    // the current namespace. So, leave mount_namespace_ as empty.
+    if (args_[0] == "/system/bin/apexd") {
+        return;
+    }
+    // Services in the following list start in the "default" mount namespace.
+    // Note that they should use bootstrap bionic if they start before APEXes are ready.
+    [[clang::no_destroy]] static const std::set<std::string> kUseDefaultMountNamespace = {
+            "ueventd",           // load firmwares from APEXes
+            "hwservicemanager",  // load VINTF fragments from APEXes
+            "servicemanager",    // load VINTF fragments from APEXes
+    };
+    if (kUseDefaultMountNamespace.find(name_) != kUseDefaultMountNamespace.end()) {
+        mount_namespace_ = NS_DEFAULT;
+        return;
+    }
+    // Use the "default" mount namespace only if it's ready
+    mount_namespace_ = IsDefaultMountNamespaceReady() ? NS_DEFAULT : NS_BOOTSTRAP;
+}
+
+static int ThreadCount() {
+    std::unique_ptr<DIR, decltype(&closedir)> dir(opendir("/proc/self/task"), closedir);
+### keystore2 in akita graph
+build/make/target/product/base_system.mk:149:    keystore2 \
+### rust intermediates in out
+fsverity
+identity
+keystore
+keystore-engine
+keystore2
+ondevice-signing
+prng_seeder
+provisioner
+out/soong/.intermediates/trusty
+out/soong/.intermediates/prebuilts/rust-toolchain
+out/soong/.intermediates/prebuilts/rust-toolchain/linux-x86/liblibc.rust_sysroot
+out/soong/.intermediates/prebuilts/rust-toolchain/linux-x86/libpanic_abort.rust_sysroot
+out/soong/.intermediates/prebuilts/rust-toolchain/linux-x86/libobject.rust_sysroot
+out/soong/.intermediates/prebuilts/rust-toolchain/linux-x86/libgimli.rust_sysroot
+out/soong/.intermediates/prebuilts/rust-toolchain/linux-x86/librustc_demangle.rust_sysroot
+out/soong/.intermediates/prebuilts/rust-toolchain/linux-x86/libcompiler_builtins.rust_sysroot
+### aconfigd
+./frameworks/native/libs/bufferstreams/aconfig
+./frameworks/base/apct-tests/perftests/aconfig
+./frameworks/base/packages/SettingsLib/aconfig
+./frameworks/base/packages/Shell/aconfig
+./frameworks/base/packages/SystemUI/aconfig
+### getpeercon in property_service
+274:        if (getpeercon(socket_.get(), &c_source_context) != 0) {
+717:            PLOG(ERROR) << "Unable to set property '" << prop_name << "': getpeercon() failed";
+744:            PLOG(ERROR) << "Unable to set property '" << name << "': getpeercon() failed";
+### unix_socket_connect macro
+system/sepolicy/public/te_macros:364:define(`unix_socket_connect', `
+system/sepolicy/public/te_macros-365-allow $1 $2_socket:sock_file write;
+system/sepolicy/public/te_macros-366-allow $1 $3:unix_stream_socket connectto;
+system/sepolicy/public/te_macros-367-')
+system/sepolicy/public/te_macros-368-
+system/sepolicy/public/te_macros-369-#####################################
+system/sepolicy/public/te_macros-370-# set_prop(sourcedomain, targetproperty)

@@ -1,0 +1,285 @@
+### global_macros 40-75
+define(`rw_dir_perms', `{ r_dir_perms w_dir_perms }')
+define(`create_dir_perms', `{ create reparent rename rmdir setattr rw_dir_perms }')
+
+define(`r_ipc_perms', `{ getattr read associate unix_read }')
+define(`w_ipc_perms', `{ write unix_write }')
+define(`rw_ipc_perms', `{ r_ipc_perms w_ipc_perms }')
+define(`create_ipc_perms', `{ create setattr destroy rw_ipc_perms }')
+
+#####################################
+# Common socket permission sets.
+define(`rw_socket_perms', `{ ioctl read getattr write setattr lock append bind connect getopt setopt shutdown map }')
+define(`rw_socket_perms_no_ioctl', `{ read getattr write setattr lock append bind connect getopt setopt shutdown map }')
+define(`create_socket_perms', `{ create rw_socket_perms }')
+define(`create_socket_perms_no_ioctl', `{ create rw_socket_perms_no_ioctl }')
+define(`rw_stream_socket_perms', `{ rw_socket_perms listen accept }')
+define(`create_stream_socket_perms', `{ create rw_stream_socket_perms }')
+divert(0)
+### access_vectors common socket 45-80
+common socket
+{
+# inherited from file
+	ioctl
+	read
+	write
+	create
+	getattr
+	setattr
+	lock
+	relabelfrom
+	relabelto
+	append
+	map
+# socket-specific
+	bind
+	connect
+	listen
+	accept
+	getopt
+	setopt
+	shutdown
+	recvfrom
+	sendto
+	name_bind
+}
+
+#
+# Define a common prefix for ipc access vectors.
+#
+
+common ipc
+{
+	create
+	destroy
+	getattr
+### prng_seeder dir
+Android.bp
+OWNERS
+prng_seeder.rc
+src
+test
+### prng_seeder Android.bp
+// Copyright (C) 2022 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package {
+    default_team: "trendy_team_java_core_libraries",
+    // See: http://go/android-license-faq
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["system_security_license"],
+}
+
+rust_defaults {
+    name: "prng_seeder_defaults",
+    edition: "2021",
+    rustlibs: [
+        "libanyhow",
+        "libbssl_sys",
+        "libclap",
+        "libhex",
+        "liblogger",
+        "liblog_rust",
+        "libnix",
+        "librustutils",
+        "libtokio",
+        "libzeroize",
+    ],
+
+    init_rc: ["prng_seeder.rc"],
+}
+
+rust_binary {
+    name: "prng_seeder",
+    defaults: ["prng_seeder_defaults"],
+    srcs: ["src/main.rs"],
+}
+
+rust_binary {
+    name: "prng_seeder_microdroid",
+    defaults: ["prng_seeder_defaults"],
+    srcs: ["src/main.rs"],
+    stem: "prng_seeder",
+    bootstrap: true,
+    installable: false,
+    prefer_rlib: true,
+}
+
+rust_binary {
+    name: "prng_seeder_client",
+    srcs: ["test/src/main.rs"],
+    prefer_rlib: true,
+    rustlibs: [
+        "libanyhow",
+        "libclap",
+        "libenv_logger",
+        "libhex",
+        "liblogger",
+        "liblog_rust",
+        "libnix",
+    ]
+}
+
+rust_test {
+    name: "prng_seeder.test",
+    defaults: ["prng_seeder_defaults"],
+    srcs: ["src/main.rs"],
+    test_suites: ["general-tests"],
+}
+### prng_seeder rc
+# Copyright (C) 2022 The Android Open Source Project
+#
+# Start PRNG seeder daemon from early-init
+
+on early-init
+    start prng_seeder
+
+service prng_seeder /system/bin/prng_seeder
+    user prng_seeder
+    group prng_seeder
+    stdio_to_kmsg
+    socket prng_seeder stream+listen 0666 prng_seeder prng_seeder
+### init socket option: seqpacket legal
+system/core/init/service_parser.cpp:441:    } else if (types[0] == "seqpacket") {
+system/core/init/service_parser.cpp:442:        socket.type = SOCK_SEQPACKET;
+system/core/init/service_parser.cpp:444:        return Error() << "socket type must be 'dgram', 'stream' or 'seqpacket', got '" << types[0]
+### prng_seeder sepolicy
+system/sepolicy/private/prng_seeder.te:4:# internal DRBGs it will connect to /dev/socket/prng_seeder and the daemon will write a
+system/sepolicy/private/prng_seeder.te:6:typeattribute prng_seeder coredomain;
+system/sepolicy/private/prng_seeder.te:9:typeattribute prng_seeder mlstrustedsubject;
+system/sepolicy/private/prng_seeder.te:11:type prng_seeder_exec, system_file_type, exec_type, file_type;
+system/sepolicy/private/prng_seeder.te:12:init_daemon_domain(prng_seeder)
+system/sepolicy/private/prng_seeder.te:15:allow prng_seeder prng_seeder:unix_stream_socket { read write getattr accept };
+system/sepolicy/private/prng_seeder.te:16:allow prng_seeder hw_random_device:chr_file { read open };
+system/sepolicy/private/prng_seeder.te:17:allow prng_seeder kmsg_debug_device:chr_file { w_file_perms getattr ioctl };
+system/sepolicy/private/file_contexts:180:/dev/socket/prng_seeder	u:object_r:prng_seeder_socket:s0
+system/sepolicy/private/file_contexts:255:/system/bin/prng_seeder		u:object_r:prng_seeder_exec:s0
+system/sepolicy/private/vendor_init.te:355:    domain -init -logd -prng_seeder -su -vendor_init });
+system/sepolicy/private/compat/34.0/34.0.cil:823:(expandtypeattribute (prng_seeder_34_0) true)
+system/sepolicy/private/compat/34.0/34.0.cil:2178:(typeattributeset prng_seeder_34_0 (prng_seeder))
+system/sepolicy/private/compat/202604/202604.cil:863:(expandtypeattribute (prng_seeder_202604) true)
+system/sepolicy/private/compat/202604/202604.cil:2312:(typeattributeset prng_seeder_202604 (prng_seeder))
+system/sepolicy/private/compat/202404/202404.cil:844:(expandtypeattribute (prng_seeder_202404) true)
+system/sepolicy/private/compat/202404/202404.cil:2236:(typeattributeset prng_seeder_202404 (prng_seeder))
+system/sepolicy/private/compat/33.0/33.0.ignore.cil:64:    prng_seeder
+system/sepolicy/private/compat/202504/202504.cil:853:(expandtypeattribute (prng_seeder_202504) true)
+system/sepolicy/private/compat/202504/202504.cil:2269:(typeattributeset prng_seeder_202504 (prng_seeder))
+system/sepolicy/private/sdk_sandbox_all.te:142:    -prng_seeder
+system/sepolicy/private/file.te:175:type prng_seeder_socket, file_type, coredomain_socket, mlstrustedobject;
+system/sepolicy/private/hal_configstore.te:34:  -prng_seeder
+system/sepolicy/private/app_zygote.te:170:  -prng_seeder
+system/sepolicy/private/domain.te:576:unix_socket_connect(domain, prng_seeder, prng_seeder)
+### keystore2 rc
+# Start the keystore2 service.
+# Keystore 2.0 changes its working directory to the first positional
+# command line option, i.e., /data/misc/keystore, where it stores its
+# database.
+# Keystore shall run as user keystore and groups keystore, readproc, and log.
+#
+# See system/core/init/README.md for information on the init.rc language.
+
+service keystore2 /system/bin/keystore2 /data/misc/keystore
+    class early_hal
+    user keystore
+    group keystore readproc log
+    task_profiles ProcessCapacityHigh
+    # The default memlock limit of 65536 bytes is too low for keystore.
+    rlimit memlock unlimited unlimited
+    # Reboot to bootloader if Keystore crashes more than 4 times before `sys.boot_completed`.
+    critical window=0
+### aconfigd module
+### shell.te unix/connectto
+37:unix_socket_connect(shell, traced_consumer, traced)
+356:unix_socket_connect(shell, dumpstate, dumpstate)
+### toybox nc unix support
+### toybox nc help/usage
+### service.h SVC flags
+42:#define SVC_DISABLED 0x001        // do not autostart with class
+43:#define SVC_ONESHOT 0x002         // do not restart on exit
+44:#define SVC_RUNNING 0x004         // currently active
+45:#define SVC_RESTARTING 0x008      // waiting to restart
+46:#define SVC_CONSOLE 0x010         // requires console
+47:#define SVC_CRITICAL 0x020        // will reboot into bootloader if keeps crashing
+48:#define SVC_RESET 0x040           // Use when stopping a process,
+50:#define SVC_RC_DISABLED 0x080     // Remember if the disabled flag was set in the rc script.
+51:#define SVC_RESTART 0x100         // Use to safely restart (stop, wait, start) a service.
+52:#define SVC_DISABLED_START 0x200  // A start was requested but it was disabled at the time.
+### mount_namespace assignments
+361:            mount_namespace_.has_value() && *mount_namespace_ == NS_DEFAULT;
+568:    if (auto result = EnterNamespaces(namespaces_, name_, mount_namespace_); !result.ok()) {
+699:    if (!mount_namespace_.has_value()) {
+701:        SetMountNamespace();
+848:void Service::SetMountNamespace() {
+850:    // the current namespace. So, leave mount_namespace_ as empty.
+862:        mount_namespace_ = NS_DEFAULT;
+866:    mount_namespace_ = IsDefaultMountNamespaceReady() ? NS_DEFAULT : NS_BOOTSTRAP;
+### restart delay/backoff
+system/core/init/init.cpp:414:        auto restart_time = s->time_started() + s->restart_period();
+### action_manager QueueAllPropertyActions
+    actions_.emplace_back(std::move(action));
+}
+
+void ActionManager::QueueEventTrigger(const std::string& trigger) {
+    auto lock = std::lock_guard{event_queue_lock_};
+    event_queue_.emplace(trigger);
+}
+
+void ActionManager::QueuePropertyChange(const std::string& name, const std::string& value) {
+    auto lock = std::lock_guard{event_queue_lock_};
+    event_queue_.emplace(std::make_pair(name, value));
+}
+
+void ActionManager::QueueAllPropertyActions() {
+    QueuePropertyChange("", "");
+}
+
+void ActionManager::QueueBuiltinAction(BuiltinFunction func, const std::string& name) {
+    auto lock = std::lock_guard{event_queue_lock_};
+    auto action = std::make_unique<Action>(true, nullptr, "<Builtin Action>", 0, name,
+                                           std::map<std::string, std::string>{});
+    action->AddCommand(std::move(func), {name}, 0);
+
+    event_queue_.emplace(action.get());
+    actions_.emplace_back(std::move(action));
+}
+### updatable option parse
+580:    service_->updatable_ = true;
+625:        {"updatable",               {0,     0,    &ServiceParser::ParseUpdatable}},
+710:        if (StartsWith(filename_, "/apex/") && !old_service->is_updatable()) {
+711:            return Error() << "cannot update a non-updatable service '" << service_->name()
+### rust toolchain present
+linux-musl-x86
+linux-x86
+1.91.1
+1.92.0
+1.93.1
+Android.bp
+OWNERS
+### keystore2/prng built in out
+ls: cannot access 'out/soong/.intermediates/system/security/keystore2/keystore2/android_common': No such file or directory
+ls: cannot access 'out/soong/.intermediates/system/security/prng_seeder/prng_seeder/android_common': No such file or directory
+### getpeercon users in platform
+system/core/init/property_service.cpp
+### peersec in sepolicy
+### traced start trigger
+on property:persist.traced.enable=1
+    # Trace files need to be:
+    # - Written by either uid:shell or uid:statsd.
+    # - Read by shell and incidentd.
+    mkdir /data/misc/perfetto-traces 0773 root shell
+### console start trigger
+1321:    start console
+grep: system/core/init/socket.cpp: No such file or directory
+grep: external/toybox/toys/net/nc.c: No such file or directory
+sed: can't read external/toybox/toys/net/nc.c: No such file or directory
