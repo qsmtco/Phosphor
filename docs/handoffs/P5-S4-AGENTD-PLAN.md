@@ -131,7 +131,7 @@ pub const MAX_FRAME_LEN: usize = 1 << 20;
 // an ERROR *code* (P5-S7 section 2.1, ERROR row). Rev-1's phantom
 // TYPE_NOT_IMPLEMENTED = 8 is removed in this revision (S4-A audit BUG #6):
 // S4's well-formed-frame reply is a TYPE_ERROR frame whose body is the ASCII
-// bytes of the code "NOT_IMPLEMENTED" (newline-terminated, 15 bytes), and the
+// bytes of the code "NOT_IMPLEMENTED" (newline-terminated, 16 bytes), and the
 // exact reply shape is what S7's author reconciles -- or amends into the
 // table -- in P5-S7 (this plan's Related issue 10). Any frame type or ERROR
 // code outside S7 section 2.1's vocabulary must be added here by a reviewed
@@ -1817,11 +1817,11 @@ fn run(name: &str) -> i32 {
                 let mut buf = [0u8; 64];
                 let n = recv_some(c, &mut buf);
                 // rev 2 (audit BUG #6): the reply is a TYPE_ERROR frame whose
-                // body is the ERROR code "NOT_IMPLEMENTED\n" (15 bytes).
-                // Expect: version=1, type=7 (ERROR), body_len=15, then the
+                // body is the ERROR code "NOT_IMPLEMENTED\n" (16 bytes).
+                // Expect: version=1, type=7 (ERROR), body_len=16, then the
                 // ASCII code. S7's author reconciles the exact shape
                 // (Related issue 10).
-                let ok = n == 8 + 15
+                let ok = n == 8 + 16
                     && buf[0] == 0
                     && buf[1] == 1
                     && buf[2] == 0
@@ -1830,7 +1830,7 @@ fn run(name: &str) -> i32 {
                     && buf[5] == 0
                     && buf[6] == 0
                     && buf[7] == 16  // rev 3 (audit BUG #13): "NOT_IMPLEMENTED\n" = 16 bytes
-                    && &buf[8..23] == phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED;
+                    && &buf[8..24] == phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED;
                 println!("reply_ok={}", ok);
                 unsafe { libc::close(c) };
                 sigterm_self();
@@ -2168,7 +2168,7 @@ git -C packages/phosphor status --porcelain    # EXPECT: empty
 Any of the following → **STOP**, paste the output, return to the Supervisor/PM:
 
 1. `m phosphor-agentd` exits non-zero, or `FAILED:` / `ninja: build stopped` appears.
-2. Soong rejects a crate name (`liblibc`/`libserde_json`/`libphosphor_ipc`), the `rust_binary`/`init_rc`/`stem` properties, or any rustc error — these are this plan's [EXPECT AT BUILD] items; paste verbatim, do not improvise a different API.
+2. Soong rejects a crate name (`liblibc`/`libserde_json`/`libphosphor_ipc`/`librustutils`), the `rust_binary`/`init_rc`/`stem` properties, or any rustc error — these are this plan's [EXPECT AT BUILD] items; paste verbatim, do not improvise a different API.
 3. The staged `.rc` deviates from §5 (wrong user/group prefix, wrong socket line, wrong trigger, extra lines).
 4. The hand-run `host_init_verifier` exits non-zero (or the negative control unexpectedly passes).
 5. `readelf`/`nm` shows binder/hidl linkage, or misses one of the five required symbols.
