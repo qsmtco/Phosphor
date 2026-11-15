@@ -79,3 +79,18 @@ pub fn decode_header(buf: &[u8]) -> Option<FrameHeader> {
         body_len: u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]),
     })
 }
+
+// AUDIT-ONLY helper (not in the plan's lib.rs): the exact bytes rev-2 §4.8's
+// handle_frame sends for a well-formed frame — header(version=1,type=ERROR,
+// body_len=16) + ERROR_CODE_NOT_IMPLEMENTED ("NOT_IMPLEMENTED\n" is 16 bytes,
+// not 15 — see audit BUG #11).
+pub fn ERROR_CODE_NOT_IMPLEMENTED_REPLY() -> [u8; 24] {
+    let mut out = [0u8; 24];
+    out[..8].copy_from_slice(&encode_header(FrameHeader {
+        version: FRAME_VERSION,
+        frame_type: TYPE_ERROR,
+        body_len: ERROR_CODE_NOT_IMPLEMENTED.len() as u32,
+    }));
+    out[8..].copy_from_slice(ERROR_CODE_NOT_IMPLEMENTED);
+    out
+}

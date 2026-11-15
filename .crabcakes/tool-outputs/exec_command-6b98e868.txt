@@ -1,0 +1,56 @@
+=== wmem_max ===
+4194304
+=== host_init_verifier unknown-user message ===
+system/core/init/service_parser.cpp:473:            return Error() << "Unable to find UID for '" << args[4] << "': " << uid.error();
+system/core/init/service_parser.cpp:541:        return Error() << "Unable to find UID for '" << args[1] << "': " << uid.error();
+=== S3B REPORT host_init_verifier command ===
+65:4. **Verifier tolerance, empirical:** my direct `host_init_verifier` run consumed exactly those five inputs (four of them 0 B) → EXIT=0. The verifier requires *resolvable names*, not non-empty files; empty `-p` inputs contribute nothing to the getpwnam union.
+66-
+67-One wording erratum (BUG #3): the evidence says all "other four" staged passwd copies are "0 bytes"; at the **staged** layer `odm/etc/passwd` does not exist at all (system/system_ext/product/vendor exist; odm's row is absent). Immaterial to correctness — see BUG #3.
+68-
+69-### Check 8 — the `.rc` verifier story: **product PASS / premise FALSE → BUG #1 (MEDIUM)**
+70-What I verified directly (product is clean):
+71:- `host_init_verifier` run with the build's own argument form (observed verbatim from in-graph edges) and inputs — the five ETC passwd intermediates + five property_contexts — positional = our staged `.rc`: **EXIT=0, no output.**
+72-- **Negative control:** same command, `.rc` with `system_ext_phosphor_keygate` → unprefixed `phosphor_keygate` (my S3-A lab method): **exit 1, 2 errors** — `Unable to find UID for 'phosphor_keygate': getpwnam failed` at rc:21 and `Unable to decode GID` at rc:22, `Failed to parse init scripts with 2 error(s)`. The prefix requirement (preflight BUG #1 mechanism) is real and load-bearing; the shipped form is clean.
+73-What is false (the premise):
+74:- §8 step 1's EXPECT text says "host_init_verifier … validates the .rc user/group lines inside this build". The ninja graph proves otherwise:
+75-  - The staged-`.rc` edge is a **bare `cp`** (`ninja -t commands out/.../phosphor_keygate.rc`).
+76-  - The Make-side verified copy is gated to Make modules only: `build/make/core/base_rules.mk:611` `ifneq ($(LOCAL_MODULE_MAKEFILE),$(SOONG_ANDROID_MK))` → our Soong `cc_binary`'s `init_rc` never enters it. (`definitions.mk:3135-3168` `copy-init-script-file-checked` — the mechanism the plan cited — exists but is on the other side of that gate; `:3137`'s TARGET_BUILD_UNBUNDLED note is unrelated.)
+77:  - Graph census: `ninja -t commands all | grep '/bin/host_init_verifier '` → **109 edges, 0 referencing phosphor** (all are Make-side vendor/proprietary `.rc` installs, e.g. `init.gs_watchdogd.rc`, `mosey.rc`; +1 microdroid prebuilt edge).
+78:  - The Soong-layer staging-dir check (`build/soong/filesystem/host_init_verifier_check.go`) never runs on this tree: `build/soong/fsgen/filesystem_creator.go:1714` unconditionally sets `Enable_host_init_verifier_check = proptools.BoolPtr(false)` for the auto-generated partition images; no `host_init_verifier_output.txt` exists anywhere under `out/` — including after S1's full image build (Sep-24 → Nov-12). The Make task stub (`build/make/core/tasks/host_init_verifier.mk:17-18`, self-described "can be removed after only supporting Soong") is included by nothing.
+79-- Consequence for the record: deviation note 3's assumption ("the verifier consumes the now-populated ETC passwd inputs in a full build — re-verified at S3's device round or S8's image build") describes a leg that **will never fire on this tree**. No future build will validate this `.rc` automatically. The compensating coverage is (a) my direct run this round (EXIT=0), and (b) one explicit verifier command that must be added to S8's verification block (or the Soong check enabled). No product risk materialized this round — hence MEDIUM (paper/safety-premise), not HIGH.
+80-
+81-### Check 9 — A4(a) lab, independently rebuilt and rerun: PASS (12/12 byte-match)
+82-- Harness transcribed from plan §7 (L418–498) into `docs/evidence/s3b-keygate-build-audit/keygate_lab.cpp`; **transcription proven byte-identical to the plan block** (3490 B) by mechanical comparison.
+83-- Compiled my own binary: `g++ -std=gnu++17 -Wall -Wextra -DKEYGATE_HOST_LAB …` → exit 0, no warnings; it `#include`s the tree's real `main.cpp` (`…/packages/phosphor/services/PhosphorKeygate/main.cpp`) — same provenance-explicit method as my S3-A lab.
+84-- All 12 scenarios executed; **every line and exit byte-matches** the evidence table and the plan's EXPECT strings:
+85-
+86-| Scenario | Observed line | last_write / read_calls / exit |
+87-|---|---|---|
+88-| error | `phosphor-keygate: safeboot=1 reason=undecided` | `=1` / 2 / 0 |
+89-| normal | `phosphor-keygate: safeboot=0 reason=t1` | `=0` / 2 / 0 |
+90-| t1 | `safeboot=1 reason=t1` | `=1` / 2 / 0 |
+91-| t2 | `safeboot=1 reason=t2` | `=1` / 2 / 0 |
+92-| t2zero | `safeboot=0 reason=t1` | `=0` / 2 / 0 |
+93-| t2absent | `safeboot=0 reason=t1` | `=0` / 2 / 0 |
+94-| t1empty | `safeboot=0 reason=t1` | `=0` / 2 / 0 |
+--
+115:**Assumption violated:** Plan §8 step 1 (and deviation note 3's forward plan) assumes `host_init_verifier` validates Soong-`init_rc` files inside `m phosphor-keygate` (and again "in a full build"). On this tree it validates nothing for Soong modules, now or ever.
+116:**Attack vector:** `ninja -t commands` on the staged `.rc` edge shows a bare `cp`; census of the whole graph shows 109 `host_init_verifier` execution edges, none touching phosphor (all Make-side vendor `.rc` installs); `build/make/core/base_rules.mk:611` gates `copy-many-init-script-files-checked` to non-Soong modules; `build/soong/fsgen/filesystem_creator.go:1714` sets `Enable_host_init_verifier_check=false` unconditionally; no `host_init_verifier_output.txt` exists anywhere in `out/` despite a full S1 image build having run.
+117:**Reproduction:** `cd TREE && prebuilts/build-tools/linux-x86/bin/ninja -f out/combined-akita.ninja -t commands out/target/product/akita/system/etc/init/phosphor_keygate.rc` → bare cp; `find out -name 'host_init_verifier_output.txt'` → nothing.
+118-**Root cause:** AOSP moved per-file init-rc verification to the filesystem/staging layer (2025 refactor), and the generated-image creator disables it; GrapheneOS tree inherits both. The plan quoted the old Make mechanism (`definitions.mk:3137-3168`).
+119:**Fix:** (a) Amend plan §8 step 1's EXPECT text and evidence deviation note 3: state that the build does NOT verify Soong `init_rc`, and that coverage = the audit's direct verifier run (green, this round) — cite `docs/evidence/s3b-keygate-build-audit/REPORT.md` Check 8. (b) Add one explicit command to S8's verification block: `out/host/linux-x86/bin/host_init_verifier -p <obj/ETC/passwd_*_intermediates/passwd_*> … <staged phosphor_keygate.rc>` (exact argument form recorded in this report). (c) Optional hardening: re-enable the Soong check upstream-side; out of this round's authority.
+120-
+121-### BUG #2
+122-**Severity:** LOW
+123-**Assumption violated:** Evidence "Static checks" claims payload-wide `boot_prop|C1` → empty, and plan §6-guards (L409) + §8 step 6 (L616) still specify the unbounded pattern as a pass/fail gate.
+124-**Attack vector:** `rg -n 'boot_prop|C1' packages/phosphor` → 8 hits (6× `phosphor_safeboot_prop` substring, 2× `C14`/`C10` comments). The gate as written can never pass; the *bounded* rev-2 form is genuinely empty.
+125-**Root cause:** Self-inflicted scope gap in my own S3-A BUG #4 fix: I bounded the §6 locate step but left the two guard lines unbounded. The Supervisor's evidence sentence inherited the unbounded form.
+126-**Fix:** Word-bound both plan guard lines (`\bboot_prop\b|\bC1\b`) and amend the evidence line to cite the bounded form. Zero payload impact.
+127-
+128-### BUG #3
+129-**Severity:** LOW
+130-**Assumption violated:** Evidence "Passwd gate" says the other four passwd copies are "0 bytes" (staged layer), and plan §8 step 0's `test -s` loop (L555–558) asserts non-empty at the **staged** `out/target/product/akita/<p>/etc/passwd` layer.
+131-**Attack vector:** Actual staged layer today: system/system_ext/product/vendor exist, `odm/etc/passwd` **missing**; the non-system_ext staged copies are 0 B — which is *correct* per generator semantics (Check 7). Re-running §8 verbatim would spuriously STOP (step 0 `test -s` fails on odm) despite correct verifier inputs.
+132-**Root cause:** Layer confusion: the verifier consumes `obj/ETC/passwd_<p>_intermediates/passwd_<p>`, not the staged `/<p>/etc/passwd` copies; emptiness at the staged layer is the documented no-AID outcome.
+133-**Fix:** Reword evidence (0-byte vs absent); re-point step 0's `test -s` loop at `out/target/product/akita/obj/ETC/passwd_${p}_intermediates/passwd_${p}` and require non-empty **only for partitions that declare AIDs** (system_ext here), or accept documented-empty for the rest.

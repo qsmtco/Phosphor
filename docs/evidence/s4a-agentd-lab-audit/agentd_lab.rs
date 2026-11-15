@@ -283,18 +283,21 @@ fn run(name: &str) -> i32 {
                 frame[10] = b'c';
                 frame[11] = b'd';
                 send_all(c, &frame);
+                // AUDIT DIAG (BUG #11): loop-recv exactly 23 bytes and dump
+                // what arrives, to split fragmentation vs content mismatch.
                 let mut buf = [0u8; 64];
-                let n = recv_some(c, &mut buf);
-                // Expect the 8-byte NOT_IMPLEMENTED header: version=1, type=8, body_len=0.
-                let ok = n == 8
-                    && buf[0] == 0
-                    && buf[1] == 1
-                    && buf[2] == 0
-                    && buf[3] == 8
-                    && buf[4] == 0
-                    && buf[5] == 0
-                    && buf[6] == 0
-                    && buf[7] == 0;
+                let mut total = 0usize;
+                while total < 24 {
+                    let n = recv_some(c, &mut buf[total..]);
+                    if n <= 0 {
+                        break;
+                    }
+                    total += n as usize;
+                }
+                let hexdump: String =
+                    buf[..total].iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                println!("reply_total={} hex={}", total, hexdump);
+                let ok = total == 24 && buf[..24] == phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED_REPLY();
                 println!("reply_ok={}", ok);
                 unsafe { libc::close(c) };
                 sigterm_self();

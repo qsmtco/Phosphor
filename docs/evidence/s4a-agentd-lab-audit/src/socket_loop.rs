@@ -174,13 +174,22 @@ fn handle_frame(c: &Conn, frame: &[u8]) -> FrameOutcome {
     {
         return FrameOutcome::Rejected("malformed_frame");
     }
-    // Zero message semantics in S4: log the frame, answer NOT_IMPLEMENTED.
+    // Zero message semantics in S4: log the frame, answer TYPE_ERROR carrying
+    // the ERROR code NOT_IMPLEMENTED (rev 2; audit BUG #6 -- S7 section 2.1
+    // defines NOT_IMPLEMENTED as an ERROR code, not a frame type; S7's author
+    // reconciles the reply shape, Related issue 10).
     logging::plain(&format!("frame_len={}", frame.len()));
-    let reply = phosphor_ipc::encode_header(phosphor_ipc::FrameHeader {
+    // AUDIT FIX (BUG #10): encode_header returns a fixed-size [u8; 8]; a
+    // fixed-size array has no extend_from_slice (E0599, reproduced). to_vec()
+    // is the minimal mechanical repair — as_ptr/len semantics unchanged.
+    let mut reply = phosphor_ipc::encode_header(phosphor_ipc::FrameHeader {
         version: phosphor_ipc::FRAME_VERSION,
-        frame_type: phosphor_ipc::TYPE_NOT_IMPLEMENTED,
-        body_len: 0,
-    });
+        frame_type: phosphor_ipc::TYPE_ERROR,
+        body_len: phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED.len() as u32,
+    })
+    .to_vec();
+    let body = phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED;
+    reply.extend_from_slice(body);
     let sent = unsafe { libc::send(c.fd, reply.as_ptr() as *const libc::c_void, reply.len(), 0) };
     if sent < 0 {
         return FrameOutcome::Closed; // peer gone; not a rejection

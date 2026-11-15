@@ -1,0 +1,4 @@
+[line 327 of docs/specs/P5-S2-selinux-foundation.md]
+327|5. Whether `ro.boot.phosphor.safeboot` is readable by `phosphor_keygate` under its default `boot_prop`/`system_prop` context or needs an explicit `get_prop` — **carried from §10.2; gates S3, not S2's compilation.**
+328|6. ~~Does `phosphor-ctl` need a fifth domain?~~ — **CLOSED (F5):** no. It runs in the existing `shell` domain: no fifth `phosphor_*` domain, no fifth AID, no rule of its own (§5 A8). S8 A4 asserts this outcome instead of re-opening it; the follow-up is only S8's wording alignment, not a policy change.
+329|7. `neverallow { domain -shell -init } phosphor_safeboot_latch_prop:property_service set` (§3.4) — confirm the enumeration/subtraction form compiles in this tree; if `-init` is unnecessary because `init` is not in `domain` in the relevant sense, drop the subtraction and record it, but never drop the line.

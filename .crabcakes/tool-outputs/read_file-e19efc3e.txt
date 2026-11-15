@@ -1,0 +1,199 @@
+[line 1 of docs/specs/P5-S2-selinux-foundation.md]
+1|# P5-S2 — SELinux foundation: `phosphor_*` types, domains, and the safe-boot property
+2|
+3|**Phase:** 5 · **Spec ID:** P5-S2 · **Rev:** 1 (draft for PM approval) · **Owner:** Coder (builder) / Debugger (auditor)
+4|**Status:** DRAFT — awaiting PM approval.
+5|**Depends on:** **P5-S1** (the `packages/phosphor/sepolicy/{public,private}` directories and the `SYSTEM_EXT_*_SEPOLICY_DIRS` wiring exist only after S1).
+6|**Blocks:** **P5-S3, P5-S4, P5-S5, P5-S6, P5-S7** — every one of them needs its domain, its property access, or its file type from this spec. S8 depends on S2 transitively.
+7|**Authority:** architecture §2.1 (four processes, UIDs, domains), §6.3 (policy artifact read grant), §6.4 (secret surface), §6.5 (safe boot + app-layer property visibility), §8 ("SELinux requirements (Phase 5 deliverables)" — the compile-ready rule set); `docs/P4-ARCH-AUDIT.md` residuals **R-2** and rev-4 findings **NEW-4/NEW-6/NEW-7**; `docs/PHASE-4-PLATFORM-ARCHITECTURE.md` §10.2 row V-2.
+8|
+9|---
+10|
+11|## 1. Scope
+12|
+13|Write the Phase 5 sepolicy that makes the architecture's four-domain split real, and make the safe-boot mechanism *achievable* rather than merely designed:
+14|
+15|1. Four domains + their entrypoints/permissions: `phosphor_keygate`, `phosphor_agentd`, `phosphor_broker`, `phosphor_shell`. **Four is the whole set** — `phosphor-ctl` (the fifth module S1 installs) runs in the existing `shell` domain and takes no Phosphor domain (§5 A8 records the decision).
+16|2. Three property types: **`phosphor_safeboot_prop`** (`sys.phosphor.safeboot`), **`phosphor_safeboot_latch_prop`** (`persist.phosphor.safeboot` — *the type R-2 says is missing*, together with its **one** writer), and their access rules.
+17|3. The `get_prop(appdomain, phosphor_safeboot_prop)` grant (§10.2 V-2's one Phase 5 rule) **and** the `set_prop(shell, phosphor_safeboot_latch_prop)` grant that makes the documented host trigger actually work (§3.3).
+18|4. The file-type declarations: `phosphor_risk_policy_file`, `phosphor_agentd_exec`, `phosphor_agentd_data_file`, plus app data types for shell/broker.
+19|5. The architecture §8 `neverallow` set, in compile-ready form, all file rules written as **`:file *`** (NEW-7 — `mmap_exec_file_perms` does not exist in this tree).
+20|
+21|### Non-goals
+22|
+23|- No `.rc` files (S3/S4), no daemon logic, no app manifests.
+24|- No permission grants on the §3 broker capability surface beyond what is needed to make the domain *exist* and *compile*; the per-capability manifest is S6.
+25|- No `seapp_contexts` change for user apps; only our four packages.
+26|- No device operation. This spec is verified by **policy compilation**, not by booting.
+27|
+28|---
+29|
+30|## 2. In-tree citations (every claim below carries one)
+31|
+32|Verified against `<tree> = ~/projects/grapheneos-2026091900`. Rows marked **[RE-VERIFY]** were confirmed by the Phase 4 audit and must be re-confirmed by the builder before the rule is written, because this spec is an implementation contract and a wrong citation is worse than a tagged one.
+33|
+34|| # | Claim | Citation |
+35||---|---|---|
+36|| C1 | `sys.*` properties default to `system_prop` | `system/sepolicy/private/property_contexts:23` |
+37|| C2 | `system_prop` is a `system_public_prop` | `system/sepolicy/public/property.te:262` |
+38|| C3 | Being public does **not** grant an app read — an explicit `get_prop` is required; the tree ships the precedent | `system/sepolicy/private/app.te:40` — `get_prop(appdomain, boot_status_prop)` |
+39|| C4 | `get_prop` expands to `{ getattr open read map }` | `system/sepolicy/public/te_macros:385-387` |
+40|| C5 | `define_prop` / `system_public_prop` emit a **type declaration only** (no read grant) — which is why C3's rule is needed | `system/sepolicy/public/te_macros:922-924` (define_prop), `:956` (system_public_prop) |
+41|| C6 | Ungoverned properties fall to `*` → `default_prop` | `system/sepolicy/private/property_contexts:168` |
+42|| C7 | `neverallow { domain -init } default_prop:property_service set` — absent a declared type, **no non-init writer at all**, which is exactly residual **R-2** | `system/sepolicy/private/property.te:805-808` |
+43|| C8 | Property `set` is a **label-level** check with no value dimension | `system/core/init/property_service.cpp:162-175` (`CheckMacPerms` → `selinux_check_access(..., "property_service", "set", ...)`) |
+44|| C9 | `CheckType` returns `true` for any empty value — so no rule can distinguish `=1` from `=0` | `system/core/init/property_type.cpp:31-35` |
+45|| C10 | The `-prop` subtraction form used for the keygate property rule is real in-tree policy shape | `system/sepolicy/private/property.te:228-244`, `:310-321` |
+46|| C11 | `mmap_exec_file_perms` is **not defined** in this tree; the available `*_file_perms` sets are the eight in `global_macros` | `system/sepolicy/public/global_macros:25-35` |
+47|| C12 | `file` class operation set (`execute`, `read`, `write`, `create`, `getattr`, `setattr`, `map`, `append`, `unlink`, `rename`, `open`) and `execute_no_trans`, `entrypoint` | `system/sepolicy/private/access_vectors:11-38`, `:180-185` |
+48|| C13 | `exact bool` property shape is already used for `sys.boot_completed` | `system/sepolicy/private/property_contexts` (`sys.boot_completed` row) **[RE-VERIFY]** |
+49|| C14 | The Phosphor policy dirs are wired as `SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS` / `SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS` (S1 §3 B5), and **`system_ext` policy is admitted to the `sepolicy_neverallows` target** — which is why the §8 `neverallow` set is legal to compile there. (The obsolete `BOARD_PLAT_*_SEPOLICY_DIR` names are `KATI_obsolete_var` in this tree and hard-abort the build.) | `system/sepolicy/Android.bp:943` (`sepolicy_neverallows` srcs = plat_public, plat_private, **system_ext_public, system_ext_private**, product_public, product_private, vendor, odm); var→Soong plumbing `build/make/core/soong_config.mk:219-220`; consumer `system/sepolicy/build/soong/build_files.go:88-89` **[RE-VERIFY]** |
+50|| C15 | System AIDs are declared centrally; our four UIDs need entries there. **Path is `system/core/libcutils/include/private/`, not `system/core/include/private/`** (the latter does not exist — `find . -name android_filesystem_config.h -not -path './prebuilts/*'` returns exactly one non-prebuilt hit) | `system/core/libcutils/include/private/android_filesystem_config.h` **[RE-VERIFY]** |
+51|
+52|**Why C14 matters, and the mechanism stated correctly:** a `neverallow` is not legal in every policy dir — it is legal only where the `sepolicy_neverallows` target admits it. That target (`system/sepolicy/Android.bp:943`) compiles the neverallow set from `plat_public + plat_private + system_ext_public + system_ext_private + product_public + product_private + vendor + odm`. So **`system_ext` carries our `neverallow` because it is admitted to that target** — *not* "because system_ext is platform policy", which is the wrong reason and would let the next reader re-derive the choice wrongly (e.g. conclude that `BOARD_VENDOR_SEPOLICY_DIRS` is equivalent, or that any platform-ish dir will do). Using a dir *outside* that list would make the entire §8 rule set compile-fail, and the natural repair — deleting the rules — would silently drop every guarantee. This is the single most important structural choice in the spec, so it is cited to the target rather than to the variable name.
+53|
+54|---
+55|
+56|## 3. Behaviour contract
+57|
+58|### 3.1 Property types (the part residual R-2 says is missing)
+59|
+60|`packages/phosphor/sepolicy/public/property.te`:
+61|
+62|```
+63|# Boot decision, written by keygate only, read by init (agentd gating) and by every app that
+64|# must decide whether to be Phosphor's surface. exact bool: AOSP ships this shape for
+65|# sys.boot_completed (C13); C8/C9 make the *value* unpoliceable, which is why §6.5's one-way
+66|# claim rests on access, not on a value check.
+67|system_public_prop(phosphor_safeboot_prop)
+68|
+69|# The set-only safe-boot latch. Declared as its OWN type so that the host's documented
+70|# escape hatch (setprop persist.phosphor.safeboot 1 over adb, while the device is otherwise
+71|# healthy) is achievable at all -- residual R-2: without this declaration the latch inherits
+72|# default_prop, and C7's neverallow makes it unwritable by every non-init domain, including
+73|# the adb shell, so §6.5:307's promise could not be kept.
+74|system_public_prop(phosphor_safeboot_latch_prop)
+75|```
+76|
+77|`packages/phosphor/sepolicy/public/property_contexts`:
+78|
+79|```
+80|sys.phosphor.safeboot              u:object_r:phosphor_safeboot_prop:s0         exact bool
+81|persist.phosphor.safeboot          u:object_r:phosphor_safeboot_latch_prop:s0   exact string
+82|persist.phosphor.agent_state       u:object_r:phosphor_safeboot_latch_prop:s0   exact string
+83|```
+84|
+85|- `sys.phosphor.safeboot` **must not** be named with a `sys.powerctl`-style special case; `exact bool` is sufficient (architecture §8).
+86|- `persist.phosphor.agent_state` is the **mirror property** that §6.5/§10.2 V-2 retain as the *escape hatch* only. It is typed here so the hatch is expressible without a later policy edit, but **nothing in S5 may use it as the primary read** — V-2's ruling is that the primary path is `get_prop(appdomain, phosphor_safeboot_prop)`.
+87|
+88|### 3.2 Access rules — the four domains
+89|
+90|`packages/phosphor/sepolicy/public/phosphor_keygate.te`:
+91|
+92|```
+93|type phosphor_keygate, domain;
+94|type phosphor_keygate_exec, exec_type, file_type, system_file_type;
+95|init_daemon_domain(phosphor_keygate)
+96|
+97|# Writes exactly one property, and only that one.
+98|set_prop(phosphor_keygate, phosphor_safeboot_prop)
+99|# Reads the triggers: the host-set immutable ro.boot.* (already readable as boot_prop-derived
+100|# context; granted explicitly only if C1's context proves insufficient) and the latch.
+101|get_prop(phosphor_keygate, phosphor_safeboot_latch_prop)
+102|```
+103|
+104|and the subtraction-form `neverallow` from §8 (see 3.4).
+105|
+106|`packages/phosphor/sepolicy/public/phosphor_agentd.te`:
+107|
+108|```
+109|type phosphor_agentd, domain;
+110|type phosphor_agentd_exec, exec_type, file_type, system_file_type;
+111|init_daemon_domain(phosphor_agentd)
+112|
+113|get_prop(phosphor_agentd, phosphor_safeboot_prop)       # to log/verify its own start condition
+114|allow phosphor_agentd phosphor_risk_policy_file:file r_file_perms;
+115|allow phosphor_agentd phosphor_agentd_data_file:dir create_dir_perms;
+116|allow phosphor_agentd phosphor_agentd_data_file:{ file lnk_file } create_file_perms;
+117|```
+118|
+119|`packages/phosphor/sepolicy/public/phosphor_broker.te` and `phosphor_shell.te`: `app_domain(phosphor_broker)` / `app_domain(phosphor_shell)` with `type phosphor_broker, domain;` / `type phosphor_shell, domain;`, broker gets `r_file_perms` on `phosphor_risk_policy_file` **and nothing writable on it**, shell gets **no** access to the policy artifact at all (§6.3: "The shell has no read access at all").
+120|
+121|### 3.3 The app-layer safe-boot read (§6.5 / §10.2 V-2 / NEW-1) **and the latch writer (R-2 discharge)**
+122|
+123|`packages/phosphor/sepolicy/private/app.te` (a Phosphor-local file — do **not** edit `system/sepolicy/private/app.te`; the `appdomain` attribute makes a local file sufficient and keeps the third-party edit surface at zero). It carries **two** rules, and both are required:
+124|
+125|```
+126|# Phase 5 rule required by §10.2 V-2: an app-layer read of sys.phosphor.safeboot is not implied
+127|# by system_public_prop (C2/C5) and needs an explicit grant, precedent at app.te:40 (C3).
+128|get_prop(appdomain, phosphor_safeboot_prop)
+129|
+130|# R-2's *writer* (the half the type declaration alone does NOT provide). The documented recovery
+131|# escape hatch is the host, over adb: `adb shell setprop persist.phosphor.safeboot 1` (§6.5,
+132|# S8 D3). The adb shell runs in the `shell` domain, so without this grant the latch type exists
+133|# but NO non-init domain may set it -- C7's default_prop neverallow would still deny it, and
+134|# A5/A7 would pass textually while the drill (S3 A1, S8 D3/D7) is denied at runtime.
+135|# Scope is deliberately minimal: ONE domain, ONE property, and `set` only (set_prop expands to
+136|# property_service set -- C8: no value dimension, so "absent->1 only, 0 ignored" stays a
+137|# keygate/S8 binary-level rule, not a claim about this rule).
+138|set_prop(shell, phosphor_safeboot_latch_prop)
+139|```
+140|
+141|Consequence, stated so it is not later mistaken for a bug: **any app on the device can read the safe-boot bit.** That is intended — it is a boot-state flag, not a secret, and the polarity is fail-closed (unreadable ⇒ safe boot, §6.5). What no app gets is `set` on the *decision*; the only `set` any non-init domain gets is `shell` on the *latch*, in the one direction the host needs.
+142|
+143|Why `shell` is the right domain and not a Phosphor one: the writer must be the host's adb path, and that path is the `shell` domain. Granting it to `phosphor_shell` (our app), `phosphor_agentd`, `phosphor_keygate` or `phosphor_broker` would let in-device code latch safe boot — which §6.5/NEW-6 forbid and A10 audits. `shell` is reachable only over adb with the cable attached, i.e. the "host + cable = trusted recovery authority" reasoning §6.5 already relies on. Nothing in-device gains the write, so the one-way property is unchanged.
+144|
+145|### 3.4 The `neverallow` set (architecture §8, compile-ready)
+146|
+147|`packages/phosphor/sepolicy/public/phosphor_neverallows.te`. All file rules use **`:file *`**; `mmap_exec_file_perms` is **not** named (NEW-7 / C11 — it would fail to compile and `:file *` denies strictly more).
+148|
+149|```
+150|# --- keygate: it decides, and is denied everything else (NEW-3) ---
+151|neverallow phosphor_keygate phosphor_agentd_exec:file *;
+152|neverallow phosphor_keygate phosphor_agentd_data_file:file *;
+153|
+154|# keygate's property access as a subtraction, in the in-tree form (C10):
+155|# it may set nothing except the boot decision.
+156|neverallow phosphor_keygate { system_prop -phosphor_safeboot_prop }:property_service set;
+157|
+158|# keygate holds no binder, no network, no device node.
+159|neverallow phosphor_keygate self:binder *;                          # * see note below
+160|neverallow phosphor_keygate self:tcp_socket *;
+161|neverallow phosphor_keygate self:udp_socket *;
+162|
+163|# --- agentd: capability-adjacent nodes are unreachable ---
+164|neverallow phosphor_agentd { device node surfaces that back telephony, camera, location,
+165|                             and radio netlink are unreachable }:file *
+166|# --- agentd: exactly one binder target ---
+167|neverallow phosphor_agentd { domain -phosphor_broker -self }:binder call;
+168|
+169|# --- the safe-boot latch: exactly ONE non-init writer (R-2 discharged by enforcement, not
+170|# by observation). §3.3 grants set_prop(shell, phosphor_safeboot_latch_prop); this line
+171|# denies every other domain, init behaving as init. Without it "exactly one writer" is merely
+172|# true today and quietly becomes false the next time someone grants anything near it.
+173|neverallow { domain -shell -init } phosphor_safeboot_latch_prop:property_service set;
+174|
+175|# --- shell: broker or nothing ---
+176|neverallow phosphor_shell { domain -phosphor_broker -self }:binder call;
+177|
+178|# --- the policy artifact is read-only to every Phosphor domain (NEW-4) ---
+179|neverallow { phosphor_agentd phosphor_broker phosphor_shell phosphor_keygate } \
+180|    phosphor_risk_policy_file:file { write append create rename setattr unlink };
+181|```
+182|
+183|**Notes the builder must resolve rather than silently drop:**
+184|- `neverallow phosphor_keygate self:binder *` — `neverallow` does not accept `*` as an operation set on every class. Write the enumerated form from C12 (`{ call transfer }`) or use the `-self` subtraction pattern; **[VERIFY AT BUILD: `m sepolicy_neverallows` reports the exact diagnostic]**. The *intent* is fixed: keygate has no binder.
+185|- The agentd device-node line is written here in prose **deliberately**: the concrete node set differs by device tree and a guessed list would either fail to compile or be vacuous. The builder must enumerate real types (telephony, camera, location, radio netlink) from the generated `vendor/google_devices/akita` policy and paste them; the auditor checks the line is non-empty and names at least the four categories in §8.
+186|- `neverallow { domain -phosphor_broker -self }:binder call` must **not** be widened to include `init`/`servicemanager` blindly — agentd calls broker through `servicemanager`, so `phosphor_agentd` needs `find` on `service_manager` but the `neverallow` is on `binder call`, not on `service_manager`. Keep the two classes separate.
+187|
+188|### 3.5 File types and contexts
+189|
+190|`public/file.te`:
+191|
+192|```
+193|type phosphor_risk_policy_file, file_type, system_file_type;
+194|type phosphor_agentd_data_file, file_type, data_file_type;
+195|```
+196|
+197|`public/
+[... truncated; line window cut after 16384 bytes; continue with line=197 ...]
