@@ -526,11 +526,9 @@ pub fn control_socket_fd(name: &str) -> std::io::Result<RawFd> {
     // first -- agentd_main() discharges that as its first statement.
     let owned =
         rustutils::android::sockets::android_get_control_socket(name).map_err(|err| match err {
-            rustutils::android::sockets::SocketError::NotInitialized => std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "inherited_fd not initialized (init_once() must run first)",
-            ),
-            other => std::io::Error::new(std::io::ErrorKind::NotFound, other.to_string()),
+            // rev 3 (audit BUG #13a): the NotInitialized arm dropped — the variant was
+        // never verified in-tree and the catch-all covers it with the same effect.
+        other => std::io::Error::new(std::io::ErrorKind::NotFound, other.to_string()),
         })?;
     Ok(owned.into_raw_fd())
 }
@@ -1251,7 +1249,8 @@ fn handle_frame(c: &Conn, frame: &[u8]) -> FrameOutcome {
         version: phosphor_ipc::FRAME_VERSION,
         frame_type: phosphor_ipc::TYPE_ERROR,
         body_len: phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED.len() as u32,
-    });
+    })
+    .to_vec();  // rev 3 (audit BUG #10): encode_header returns [u8; 8]; E0599 without this
     let body = phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED;
     reply.extend_from_slice(body);
     let sent = unsafe { libc::send(c.fd, reply.as_ptr() as *const libc::c_void, reply.len(), 0) };
@@ -1515,7 +1514,7 @@ extern "C" {
 // /tmp/agentd_lab.rs -- P5-S4 host lab harness. Lab-only; NOT a payload
 // artifact. Includes the REAL tree sources (provenance-explicit, keygate
 // pattern) and drives the decision-tree scenarios; the scenario name is
-// argv[1]. Build (plan section 8, lab block) -- FOUR rustc invocations:
+// argv[1]. Build (plan section 8, lab block) -- three rustc invocations:
 //   rustc --crate-type lib --crate-name libc /tmp/lab_libc.rs -o /tmp/liblibc_lab.rlib
 //   rustc --crate-type lib --crate-name serde_json /tmp/lab_serde.rs \
 //         -o /tmp/libserde_lab.rlib
@@ -1830,7 +1829,7 @@ fn run(name: &str) -> i32 {
                     && buf[4] == 0
                     && buf[5] == 0
                     && buf[6] == 0
-                    && buf[7] == 15
+                    && buf[7] == 16  // rev 3 (audit BUG #13): "NOT_IMPLEMENTED\n" = 16 bytes
                     && &buf[8..23] == phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED;
                 println!("reply_ok={}", ok);
                 unsafe { libc::close(c) };
@@ -2005,10 +2004,10 @@ out/host/linux-x86/bin/host_init_verifier \
   -p out/target/product/akita/obj/ETC/passwd_vendor_intermediates/passwd_vendor \
   -p out/target/product/akita/obj/ETC/passwd_product_intermediates/passwd_product \
   --property-contexts=out/target/product/akita/obj/ETC/plat_property_contexts_intermediates/plat_property_contexts \
-  --property-contexts=out/target/product/akita/obj/ETC/plat_property_contexts_intermediates/system_ext_property_contexts \
-  --property-contexts=out/target/product/akita/obj/ETC/plat_property_contexts_intermediates/product_property_contexts \
+  --property-contexts=out/target/product/akita/obj/ETC/system_ext_property_contexts_intermediates/system_ext_property_contexts \
+  --property-contexts=out/target/product/akita/obj/ETC/product_property_contexts_intermediates/product_property_contexts \
   --property-contexts=out/target/product/akita/obj/ETC/vendor_property_contexts_intermediates/vendor_property_contexts \
-  --property-contexts=out/target/product/akita/obj/ETC/vendor_property_contexts_intermediates/odm_property_contexts \
+  --property-contexts=out/target/product/akita/obj/ETC/odm_property_contexts_intermediates/odm_property_contexts \
   "$R"
 # EXPECT [EXPECT AT BUILD]: exit 0, no output. (The five --property-contexts
 # intermediates above are the module names seen in the live ninja edges; the
@@ -2057,7 +2056,7 @@ rg -n '/data/misc/keystore|/data/adb|/data/local/tmp|credentials' packages/phosp
 rg -n 'tel\.|sms\.|contacts\.|camera\.|settings\.|geo\.|clip\.' packages/phosphor/services/PhosphorIpc packages/phosphor/services/PhosphorAgentd/src
 # EXPECT: no output (no capability vocabulary rides the channel)
 
-# 8) lab harness (plan section 7) -- FOUR rustc invocations (rev 2; audit
+# 8) lab harness (plan section 7) -- three rustc invocations (rev 2; audit
 #    BUG #3: serde_json must be linked as an extern crate too, because paths
 #    inside include!'d files resolve against the EXTERN prelude, not against
 #    harness mod items; /tmp/lab_serde.rs is the bundled lab-only
