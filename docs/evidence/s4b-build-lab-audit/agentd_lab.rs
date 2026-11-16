@@ -1,0 +1,389 @@
+// /tmp/agentd_lab.rs -- P5-S4 host lab harness. Lab-only; NOT a payload
+// artifact. Includes the REAL tree sources (provenance-explicit, keygate
+// pattern) and drives the decision-tree scenarios; the scenario name is
+// argv[1]. Build (plan section 8, lab block) -- three rustc invocations:
+//   rustc --crate-type lib --crate-name libc /tmp/lab_libc.rs -o /tmp/liblibc_lab.rlib
+//   rustc --crate-type lib --crate-name serde_json /tmp/lab_serde.rs \
+//         -o /tmp/libserde_lab.rlib
+//   rustc --edition 2021 --cfg 'feature="lab"' \
+//         --extern libc=/tmp/liblibc_lab.rlib --extern serde_json=/tmp/libserde_lab.rlib \
+//         /tmp/agentd_lab.rs -o /tmp/agentd_lab
+// (/tmp/lab_serde.rs: a minimal RFC-8259 subset exposing exactly the
+// serde_json::Value API surface policy.rs uses -- from_slice + Value with
+// get(&str). Lab-only stand-in; the DEVICE build links the real libserde_json
+// via soong. The lab_serde source is bundled with this plan's evidence at
+// docs/evidence/s4a-agentd-lab-audit/lab_serde.rs -- transcribe it to /tmp
+// alongside lab_libc.rs.)
+//
+// Module-resolution note (rev 2; audit BUG #3 -- this is the part rev 1 got
+// wrong): `include!` splices src/main.rs into THIS crate root, but the
+// included file's top-level paths resolve against the **extern prelude**, not
+// against items the harness declares below the include. Therefore:
+//   - `serde_json` and `libc` must be linked as EXTERN crates (--extern
+//     lines above); declaring `mod serde_json` inside the harness does NOT
+//     satisfy the included sources' `serde_json::` paths;
+//   - `phosphor_ipc` must be a `mod` declared in the harness root (a plain
+//     path mod from the tree file works because only extern-prelude names
+//     need extern linkage);
+//   - `include!("src/main.rs")` itself is mandatory -- without it the
+//     harness has no `agentd_main`, and the E0433/E0425 errors the audit hit
+//     (`health`, `serde_json`, `set_lab_listen_fd`) are exactly the
+//     extern-prelude rule biting;
+//   - `platform::set_lab_listen_fd` is called qualified from the harness
+//     (the fn lives in the platform module of the included tree).
+#![allow(dead_code)]
+
+#[path = "/home/cptjaqx/projects/grapheneos-2026091900/packages/phosphor/services/PhosphorIpc/lib.rs"]
+mod phosphor_ipc;
+
+include!("/home/cptjaqx/projects/grapheneos-2026091900/packages/phosphor/services/PhosphorAgentd/src/main.rs");
+
+const LAB_SOCK: &str = "/tmp/agentd_lab.sock";
+const LAB_DATA: &str = "/tmp/agentd_lab_data";
+
+fn fresh_env() {
+    let _ = std::fs::remove_dir_all(LAB_DATA);
+    let _ = std::fs::remove_file(LAB_SOCK);
+    std::env::remove_var("LAB_PROP_sys_phosphor_safeboot");
+    std::env::remove_var("LAB_POLICY_PATH");
+    std::env::remove_var("LAB_PEER_LABEL");
+    std::env::set_var("LAB_DATA_DIR", LAB_DATA);
+    std::env::set_var("LAB_HEALTH_PATH", format!("{}/health", LAB_DATA));
+}
+
+fn write_policy(body: &str) {
+    std::fs::create_dir_all(LAB_DATA).unwrap();
+    std::fs::write(format!("{}/risk-policy.json", LAB_DATA), body).unwrap();
+    std::env::set_var("LAB_POLICY_PATH", format!("{}/risk-policy.json", LAB_DATA));
+}
+
+// Bind-only: init hands a bound, NOT-listening fd; the daemon listens.
+fn make_listener() -> i32 {
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0) };
+    assert!(fd >= 0);
+    let _ = std::fs::remove_file(LAB_SOCK);
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (i, b) in LAB_SOCK.as_bytes().iter().enumerate() {
+        addr.sun_path[i] = *b as libc::c_char;
+    }
+    assert_eq!(
+        unsafe {
+            libc::bind(
+                fd,
+                &addr as *const libc::sockaddr_un as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+            )
+        },
+        0
+    );
+    // Big buffers so the oversized-frame datagram actually traverses.
+    let bufsz: libc::c_int = 8 << 20;
+    unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            &bufsz as *const libc::c_int as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    fd
+}
+
+fn connect_client() -> i32 {
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0) };
+    assert!(fd >= 0);
+    let bufsz: libc::c_int = 8 << 20;
+    unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            &bufsz as *const libc::c_int as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (i, b) in LAB_SOCK.as_bytes().iter().enumerate() {
+        addr.sun_path[i] = *b as libc::c_char;
+    }
+    // rev 2 (audit BUG #5): the daemon reaches listen() only after dir/
+    // health/policy work, so an immediate connect() hits a bound-but-NOT-
+    // listening socket and gets ECONNREFUSED (deterministic on Linux) --
+    // the bare assert_eq! panicked the client thread before sigterm_self()
+    // and agentd_main() spun forever (first healthy_start run hung in the
+    // audit lab). Bounded retry, ~2 s, then fail like the bare assert would.
+    let mut ok = false;
+    for _ in 0..200 {
+        let rc = unsafe {
+            libc::connect(
+                fd,
+                &addr as *const libc::sockaddr_un as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t,
+            )
+        };
+        if rc == 0 {
+            ok = true;
+            break;
+        }
+        unsafe { libc::usleep(10_000) };
+    }
+    assert!(ok, "connect_client: connect never succeeded within 2s");
+    fd
+}
+
+fn send_all(fd: i32, data: &[u8]) {
+    let n = unsafe { libc::send(fd, data.as_ptr() as *const libc::c_void, data.len(), 0) };
+    assert_eq!(n, data.len() as isize);
+}
+
+fn recv_some(fd: i32, buf: &mut [u8]) -> isize {
+    unsafe { libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0) }
+}
+
+fn sigterm_self() {
+    unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
+}
+
+fn print_health() {
+    match std::fs::read_to_string(format!("{}/health", LAB_DATA)) {
+        Ok(t) => {
+            for line in t.lines() {
+                println!("health {}", line);
+            }
+        }
+        Err(_) => println!("health_absent=1"),
+    }
+}
+
+fn main() {
+    let scenario = std::env::args().nth(1).unwrap_or_else(|| "unit".to_string());
+    let code = run(&scenario);
+    std::process::exit(code);
+}
+
+fn run(name: &str) -> i32 {
+    match name {
+        // (1) refuse-start, safeboot=1 -- the section 2.2 defence. REQUIRED.
+        "refuse_safeboot1" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "1");
+            let rc = agentd_main();
+            println!("data_dir_absent={}", !std::path::Path::new(LAB_DATA).exists());
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (2) refuse-start, safeboot unreadable (absent => refuse, section 5 row 2).
+        "refuse_absent" => {
+            fresh_env();
+            let rc = agentd_main();
+            println!("data_dir_absent={}", !std::path::Path::new(LAB_DATA).exists());
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (3) policy missing => fatal. REQUIRED.
+        "policy_missing" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            std::env::set_var("LAB_POLICY_PATH", "/tmp/agentd_lab_no_such_policy.json");
+            let rc = agentd_main();
+            print_health();
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (4) policy garbage => fatal. REQUIRED.
+        "policy_garbage" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            write_policy("{ this is not json");
+            let rc = agentd_main();
+            print_health();
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (5) policy without policy_version => fatal (section 5 last row). REQUIRED.
+        "policy_no_version" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            write_policy("{\"something\":1}");
+            let rc = agentd_main();
+            print_health();
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (6) healthy start to loop, then clean SIGTERM shutdown. REQUIRED.
+        "healthy_start" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            write_policy("{\"policy_version\":\"1.0\"}");
+            std::env::set_var("LAB_PEER_LABEL", "u:r:phosphor_shell:s0");
+            let lfd = make_listener();
+            platform::set_lab_listen_fd(lfd);
+            let t = std::thread::spawn(|| {
+                let c = connect_client();
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                println!("client_connected=1");
+                sigterm_self();
+            });
+            let rc = agentd_main();
+            let _ = t.join();
+            print_health();
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (7) wrong-label peer rejection (label string injected). REQUIRED.
+        "wrong_label" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            write_policy("{\"policy_version\":\"1.0\"}");
+            std::env::set_var("LAB_PEER_LABEL", "u:r:shell:s0"); // NOT the accepted label
+            let lfd = make_listener();
+            platform::set_lab_listen_fd(lfd);
+            let t = std::thread::spawn(|| {
+                let c = connect_client();
+                let mut buf = [0u8; 64];
+                let n = recv_some(c, &mut buf); // server must close on rejection
+                println!("client_closed={}", n == 0);
+                unsafe { libc::close(c) };
+                sigterm_self();
+            });
+            let rc = agentd_main();
+            let _ = t.join();
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (8) oversized frame => close + peer_rejected. REQUIRED.
+        "oversized_frame" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            write_policy("{\"policy_version\":\"1.0\"}");
+            std::env::set_var("LAB_PEER_LABEL", "u:r:phosphor_shell:s0");
+            let lfd = make_listener();
+            platform::set_lab_listen_fd(lfd);
+            let t = std::thread::spawn(|| {
+                let c = connect_client();
+                let big = vec![0u8; phosphor_ipc::MAX_FRAME_LEN + 1];
+                send_all(c, &big);
+                let mut buf = [0u8; 64];
+                let n = recv_some(c, &mut buf);
+                println!("client_closed={}", n == 0);
+                unsafe { libc::close(c) };
+                sigterm_self();
+            });
+            let rc = agentd_main();
+            let _ = t.join();
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (9) well-formed frame => frame_len= log + NOT_IMPLEMENTED reply (ruling 8).
+        "wellformed_frame" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            write_policy("{\"policy_version\":\"1.0\"}");
+            std::env::set_var("LAB_PEER_LABEL", "u:r:phosphor_shell:s0");
+            let lfd = make_listener();
+            platform::set_lab_listen_fd(lfd);
+            let t = std::thread::spawn(|| {
+                let c = connect_client();
+                let mut frame = vec![0u8; 12];
+                frame[0] = 0;
+                frame[1] = 1; // version = 1
+                frame[2] = 0;
+                frame[3] = 1; // type = HELLO
+                frame[4] = 0;
+                frame[5] = 0;
+                frame[6] = 0;
+                frame[7] = 4; // body_len = 4
+                frame[8] = b'a';
+                frame[9] = b'b';
+                frame[10] = b'c';
+                frame[11] = b'd';
+                send_all(c, &frame);
+                let mut buf = [0u8; 64];
+                let n = recv_some(c, &mut buf);
+                // rev 2 (audit BUG #6): the reply is a TYPE_ERROR frame whose
+                // body is the ERROR code "NOT_IMPLEMENTED\n" (16 bytes).
+                // Expect: version=1, type=7 (ERROR), body_len=16, then the
+                // ASCII code. S7's author reconciles the exact shape
+                // (Related issue 10).
+                let ok = n == 8 + 16
+                    && buf[0] == 0
+                    && buf[1] == 1
+                    && buf[2] == 0
+                    && buf[3] == 7
+                    && buf[4] == 0
+                    && buf[5] == 0
+                    && buf[6] == 0
+                    && buf[7] == 16  // rev 3 (audit BUG #13): "NOT_IMPLEMENTED\n" = 16 bytes
+                    && &buf[8..24] == phosphor_ipc::ERROR_CODE_NOT_IMPLEMENTED;
+                println!("reply_ok={}", ok);
+                unsafe { libc::close(c) };
+                sigterm_self();
+            });
+            let rc = agentd_main();
+            let _ = t.join();
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (10) clean SIGTERM shutdown; init owns the socket file (no unlink). REQUIRED.
+        "sigterm_shutdown" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            write_policy("{\"policy_version\":\"1.0\"}");
+            let lfd = make_listener();
+            platform::set_lab_listen_fd(lfd);
+            let t = std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                sigterm_self();
+            });
+            let rc = agentd_main();
+            let _ = t.join();
+            println!("socket_file_still_exists={}", std::path::Path::new(LAB_SOCK).exists());
+            println!("scenario={} exit={}", name, rc);
+            rc
+        }
+        // (11) crashloop backoff trip (erratum 18: the daemon's own backstop). REQUIRED.
+        "crashloop_trip" => {
+            fresh_env();
+            std::env::set_var("LAB_PROP_sys_phosphor_safeboot", "0");
+            std::env::set_var("LAB_POLICY_PATH", "/tmp/agentd_lab_no_such_policy.json");
+            // Seed: two consecutive fast deaths already recorded.
+            std::fs::create_dir_all(LAB_DATA).unwrap();
+            std::fs::write(
+                format!("{}/health", LAB_DATA),
+                "pid=1\nstarted_at=0\npolicy_version=none\nlast_frame_at=0\nfast_crashes=2\ndied_fast=1\ncrashloop=0\n",
+            )
+            .unwrap();
+            let rc1 = agentd_main(); // third fast death: trips the marker
+            println!("exit1={}", rc1);
+            print_health();
+            let rc2 = agentd_main(); // latched: exits without touching policy
+            println!("exit2={}", rc2);
+            println!("scenario={} exit={}", name, rc2);
+            rc2
+        }
+        // (12) unit: sha256 vectors + frame-header codec roundtrip.
+        "unit" => {
+            let ok_sha_empty = sha256::hex(&sha256::sha256(b""))
+                == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+            let ok_sha_abc = sha256::hex(&sha256::sha256(b"abc"))
+                == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+            let h = phosphor_ipc::FrameHeader { version: 1, frame_type: 3, body_len: 7 };
+            let enc = phosphor_ipc::encode_header(h);
+            let dec = phosphor_ipc::decode_header(&enc);
+            let ok_hdr = dec == Some(h) && phosphor_ipc::decode_header(&[0u8; 4]).is_none();
+            println!("unit_ok={}", ok_sha_empty && ok_sha_abc && ok_hdr);
+            if ok_sha_empty && ok_sha_abc && ok_hdr {
+                0
+            } else {
+                1
+            }
+        }
+        _ => {
+            println!("unknown scenario {}", name);
+            2
+        }
+    }
+}
